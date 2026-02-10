@@ -1,0 +1,20 @@
+{
+  "id": "76fddebb",
+  "name": "世界设定",
+  "type": "世界设定",
+  "content": [
+    {
+      "id": "item_1",
+      "content": "",
+      "created_at": "2026-02-10T16:32:30.824924",
+      "updated_at": "2026-02-10T16:32:30.824924"
+    }
+  ],
+  "project_id": "default",
+  "metadata": {},
+  "parent_id": null,
+  "children": [],
+  "created_at": "2026-02-10T16:32:30.824924",
+  "updated_at": "2026-02-10T16:32:30.824924",
+  "selected_items": []
+}
