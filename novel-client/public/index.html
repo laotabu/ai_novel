@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI小说生成器 - Electron客户端</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- 顶部导航栏 -->
+        <header class="app-header">
+            <div class="header-left">
+                <div class="logo">
+                    <i class="fas fa-book"></i>
+                    <h1>AI小说生成器</h1>
+                </div>
+                <div class="server-status" id="serverStatus">
+                    <div class="status-indicator status-stopped" id="statusIndicator"></div>
+                    <span class="status-text" id="statusText">服务器未连接</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <button class="btn btn-sm btn-success" id="startServerBtn">
+                    <i class="fas fa-play"></i> 启动服务器
+                </button>
+                <button class="btn btn-sm btn-danger" id="stopServerBtn" disabled>
+                    <i class="fas fa-stop"></i> 停止服务器
+                </button>
+                <button class="btn btn-sm btn-primary" id="refreshBtn">
+                    <i class="fas fa-sync-alt"></i> 刷新
+                </button>
+                <button class="btn btn-sm btn-info" onclick="novelGenerator.showHelp()">
+                    <i class="fas fa-question-circle"></i> 帮助
+                </button>
+            </div>
+        </header>
+
+        <!-- 主内容区域 - 三栏布局 -->
+        <main class="app-main">
+            <!-- 左侧：上下文列表 -->
+            <section class="panel panel-left">
+                <div class="panel-header">
+                    <h2><i class="fas fa-inbox"></i> 小说上下文</h2>
+                    <div class="panel-actions">
+                        <div class="search-box">
+                            <i class="fas fa-search"></i>
+                            <input type="text" id="searchInput" placeholder="搜索上下文...">
+                        </div>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div class="context-list" id="contextList">
+                        <div class="loading">
+                            <i class="fas fa-spinner fa-spin"></i> 正在加载上下文...
+                        </div>
+                    </div>
+                </div>
+                <div class="panel-footer">
+                    <div class="stats">
+                        <span id="selectedCount">0</span> 个已选中
+                    </div>
+                </div>
+            </section>
+
+            <!-- 中间：上下文详情和树状图 -->
+            <section class="panel panel-middle">
+                <div class="panel-header">
+                    <h2><i class="fas fa-project-diagram"></i> 上下文树状图</h2>
+                    <div class="panel-actions">
+                        <button class="btn btn-sm btn-primary" onclick="novelGenerator.exportNovel()" id="exportBtn">
+                            <i class="fas fa-download"></i> 导出小说
+                        </button>
+                        <button class="btn btn-sm btn-success" onclick="novelGenerator.saveNovel()">
+                            <i class="fas fa-save"></i> 保存
+                        </button>
+                        <button class="btn btn-sm btn-info" onclick="novelGenerator.toggleViewMode()" id="viewModeBtn">
+                            <i class="fas fa-list"></i> 切换视图
+                        </button>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <!-- 树状图容器 -->
+                    <div class="tree-container" id="treeContainer">
+                        <div class="tree-controls">
+                            <div class="tree-toolbar">
+                                <button class="btn btn-sm" onclick="novelGenerator.zoomIn()" title="放大">
+                                    <i class="fas fa-search-plus"></i>
+                                </button>
+                                <button class="btn btn-sm" onclick="novelGenerator.zoomOut()" title="缩小">
+                                    <i class="fas fa-search-minus"></i>
+                                </button>
+                                <button class="btn btn-sm" onclick="novelGenerator.resetZoom()" title="重置缩放">
+                                    <i class="fas fa-expand-arrows-alt"></i>
+                                </button>
+                                <button class="btn btn-sm" onclick="novelGenerator.centerTree()" title="居中">
+                                    <i class="fas fa-crosshairs"></i>
+                                </button>
+                                <div class="tree-stats">
+                                    <span id="treeNodeCount">0</span> 个节点
+                                </div>
+                            </div>
+                        </div>
+                        <div class="tree-visualization" id="treeVisualization">
+                            <div class="loading">
+                                <i class="fas fa-spinner fa-spin"></i> 正在加载树状图...
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 上下文详情（默认隐藏，可通过切换视图显示） -->
+                    <div id="contextDetails" style="display: none;">
+                        <div class="empty-state">
+                            <i class="fas fa-mouse-pointer"></i>
+                            <p>请从左侧选择一个上下文</p>
+                        </div>
+                    </div>
+                    
+                    <div id="contextItems" style="display: none;">
+                        <div class="empty-state">
+                            <i class="fas fa-inbox"></i>
+                            <p>选择上下文后查看条目</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 右侧：聊天和生成 -->
+            <section class="panel panel-right">
+                <div class="panel-header">
+                    <h2><i class="fas fa-robot"></i> AI小说创作</h2>
+                    <div class="panel-actions">
+                        <button class="btn btn-sm btn-warning" onclick="novelGenerator.clearChat()">
+                            <i class="fas fa-trash"></i> 清除记录
+                        </button>
+                        <button class="btn btn-sm btn-success" id="generateBtn">
+                            <i class="fas fa-magic"></i> 生成小说
+                        </button>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div class="generation-params">
+                        <h3><i class="fas fa-sliders-h"></i> 生成参数</h3>
+                        <div class="param-group">
+                            <label>创意度: <span id="creativityValue">70</span>%</label>
+                            <input type="range" id="creativitySlider" min="0" max="100" value="70" class="param-slider">
+                        </div>
+                        <div class="param-group">
+                            <label>长度: <span id="lengthValue">500</span>字</label>
+                            <input type="range" id="lengthSlider" min="100" max="2000" value="500" step="100" class="param-slider">
+                        </div>
+                        <div class="param-group">
+                            <label>风格强度: <span id="styleValue">80</span>%</label>
+                            <input type="range" id="styleSlider" min="0" max="100" value="80" class="param-slider">
+                        </div>
+                    </div>
+                    
+                    <div class="chat-section">
+                        <div class="chat-header">
+                            <h3><i class="fas fa-comments"></i> 创作对话</h3>
+                            <div class="chat-stats">
+                                <span id="messageCount">0</span> 条消息
+                            </div>
+                        </div>
+                        
+                        <div class="chat-messages" id="chatMessages">
+                            <!-- 聊天消息将通过JavaScript动态生成 -->
+                            <div class="loading">
+                                <i class="fas fa-spinner fa-spin"></i> 正在初始化...
+                            </div>
+                        </div>
+                        
+                        <div class="chat-input-area">
+                            <textarea 
+                                class="chat-input" 
+                                id="chatInput" 
+                                placeholder="输入创作指令... (Shift+Enter换行，Enter发送)"
+                                rows="3"
+                            ></textarea>
+                            <button class="send-btn" id="sendMessageBtn">
+                                <i class="fas fa-paper-plane"></i> 发送
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 底部状态栏 -->
+        <footer class="app-footer">
+            <div class="footer-left">
+                <span id="statusMessage">
+                    <i class="fas fa-info-circle"></i> 就绪 - 使用Ctrl+G生成小说，Ctrl+S保存
+                </span>
+            </div>
+            <div class="footer-right">
+                <button class="btn btn-sm" onclick="novelGenerator.showAbout()">
+                    <i class="fas fa-info-circle"></i> 关于
+                </button>
+                <span id="currentTime" style="margin-left: 10px;">--:--:--</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- 模态对话框 -->
+    <div class="modal-overlay" id="modalOverlay" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modalTitle">模态框标题</h3>
+                <button class="close-btn" id="closeModalBtn">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- 模态框内容将通过JavaScript动态生成 -->
+            </div>
+            <div class="modal-footer">
+                <!-- <button class="btn btn-primary" onclick="novelGenerator.hideModal()">
+                    关闭
+                </button> -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 加载遮罩 -->
+    <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+        <div class="loading-overlay-content">
+            <div class="loading-overlay-spinner"></div>
+            <div class="loading-overlay-text" id="loadingText">加载中...</div>
+        </div>
+    </div>
+
+    <!-- D3.js 可视化库 -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    
+    <!-- JavaScript文件 -->
+    <script src="renderer.js"></script>
+    
+    <!-- 右键菜单样式 -->
+    <style>
+        .context-menu {
+            position: absolute;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 1000;
+            min-width: 150px;
+            display: none;
+        }
+        
+        .context-menu-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #333;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background-color 0.2s;
+        }
+        
+        .context-menu-item:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .context-menu-item:last-child {
+            border-bottom: none;
+        }
+        
+        .context-menu-item i {
+            margin-right: 8px;
+            width: 16px;
+            text-align: center;
+        }
+        
+        .context-menu-item.add-child {
+            color: #28a745;
+        }
+        
+        .context-menu-item.edit-node {
+            color: #007bff;
+        }
+        
+        .context-menu-item.delete-node {
+            color: #dc3545;
+        }
+        
+        .tree-node {
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .tree-node:hover {
+            opacity: 0.8;
+        }
+        
+        .tree-node.selected {
+            stroke: #007bff;
+            stroke-width: 3px;
+        }
+        
+        .tree-link {
+            fill: none;
+            stroke: #ccc;
+            stroke-width: 2px;
+        }
+        
+        .tree-label {
+            font-size: 12px;
+            font-weight: 500;
+            fill: #333;
+            pointer-events: none;
+        }
+        
+        .tree-node-icon {
+            font-size: 10px;
+            fill: white;
+            text-anchor: middle;
+            dominant-baseline: central;
+            pointer-events: none;
+        }
+    </style>
+    
+    <!-- 右键菜单HTML -->
+    <div id="contextMenu" class="context-menu">
+        <div class="context-menu-item add-child" data-action="add-child">
+            <i class="fas fa-plus-circle"></i> 添加子节点
+        </div>
+        <div class="context-menu-item edit-node" data-action="edit">
+            <i class="fas fa-edit"></i> 编辑节点
+        </div>
+        <div class="context-menu-item delete-node" data-action="delete">
+            <i class="fas fa-trash"></i> 删除节点
+        </div>
+        <div class="context-menu-item" data-action="expand">
+            <i class="fas fa-expand"></i> 展开全部
+        </div>
+        <div class="context-menu-item" data-action="collapse">
+            <i class="fas fa-compress"></i> 折叠全部
+        </div>
+    </div>
+    
+    <!-- 页面加载完成后初始化 -->
+    <script>
+        // 更新时间显示
+        function updateTime() {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString('zh-CN', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+            const timeElement = document.getElementById('currentTime');
+            if (timeElement) {
+                timeElement.textContent = timeString;
+            }
+        }
+        
+        // 初始更新时间
+        updateTime();
+        
+        // 每秒更新一次时间
+        setInterval(updateTime, 1000);
+        
+        // 更新滑块值显示
+        document.addEventListener('DOMContentLoaded', () => {
+            const creativitySlider = document.getElementById('creativitySlider');
+            const lengthSlider = document.getElementById('lengthSlider');
+            const styleSlider = document.getElementById('styleSlider');
+            
+            if (creativitySlider) {
+                creativitySlider.addEventListener('input', (e) => {
+                    document.getElementById('creativityValue').textContent = e.target.value;
+                });
+            }
+            
+            if (lengthSlider) {
+                lengthSlider.addEventListener('input', (e) => {
+                    document.getElementById('lengthValue').textContent = e.target.value;
+                });
+            }
+            
+            if (styleSlider) {
+                styleSlider.addEventListener('input', (e) => {
+                    document.getElementById('styleValue').textContent = e.target.value;
+                });
+            }
+            
+            // 初始化novelGenerator
+            setTimeout(() => {
+                if (window.novelGenerator) {
+                    // 移除不存在的updateGenerationStats方法调用
+                    // window.novelGenerator.updateGenerationStats();
+                    
+                    // 如果需要更新统计数据，可以调用存在的方法
+                    // 例如更新节点计数等
+                    if (window.novelGenerator.contextTree) {
+                        window.novelGenerator.updateTreeNodeCount(window.novelGenerator.contextTree.length);
+                    }
+                }
+            }, 1000);
+        });
+    </script>
+</body>
+</html>
