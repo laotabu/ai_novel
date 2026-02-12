@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI小说生成器 - Electron客户端</title>
+    <title>AI小说生成器</title>
     <link rel="stylesheet" href="styles.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -40,24 +40,57 @@
 
         <!-- 主内容区域 - 三栏布局 -->
         <main class="app-main">
-            <!-- 左侧：上下文列表 -->
+            <!-- 左侧：上下文列表和已选中上下文 -->
             <section class="panel panel-left">
-                <div class="panel-header">
-                    <h2><i class="fas fa-inbox"></i> 小说上下文</h2>
-                    <div class="panel-actions">
-                        <div class="search-box">
-                            <i class="fas fa-search"></i>
-                            <input type="text" id="searchInput" placeholder="搜索上下文...">
+                <div class="panel-tabs">
+                    <button class="tab-btn active" data-tab="context-list" id="contextListTab">
+                        <i class="fas fa-inbox"></i> 小说上下文
+                    </button>
+                    <button class="tab-btn" data-tab="selected-contexts" id="selectedContextsTab">
+                        <i class="fas fa-check-circle"></i> 已选中上下文
+                        <span class="tab-badge" id="selectedTabBadge">0</span>
+                    </button>
+                </div>
+                
+                <!-- 上下文列表 -->
+                <div class="tab-content active" id="context-listTab">
+                    <div class="panel-header">
+                        <div class="panel-actions">
+                            <div class="search-box">
+                                <i class="fas fa-search"></i>
+                                <input type="text" id="searchInput" placeholder="搜索上下文...">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="panel-content">
+                        <div class="context-list" id="contextList">
+                            <div class="loading">
+                                <i class="fas fa-spinner fa-spin"></i> 正在加载上下文...
+                            </div>
                         </div>
                     </div>
                 </div>
-                <div class="panel-content">
-                    <div class="context-list" id="contextList">
-                        <div class="loading">
-                            <i class="fas fa-spinner fa-spin"></i> 正在加载上下文...
+                
+                <!-- 已选中上下文 -->
+                <div class="tab-content" id="selected-contextsTab">
+                    <div class="panel-header">
+                        <div class="panel-actions">
+                            <button class="btn btn-sm btn-danger" onclick="novelGenerator.clearSelection()">
+                                <i class="fas fa-trash"></i> 清空选择
+                            </button>
+                        </div>
+                    </div>
+                    <div class="panel-content">
+                        <div class="selected-contexts-list" id="selectedContextsList">
+                            <div class="empty-state">
+                                <i class="fas fa-check-circle"></i>
+                                <p>暂无选中的上下文</p>
+                                <p class="text-muted">从左侧列表中选择上下文后，将在此处显示</p>
+                            </div>
                         </div>
                     </div>
                 </div>
+                
                 <div class="panel-footer">
                     <div class="stats">
                         <span id="selectedCount">0</span> 个已选中
@@ -69,24 +102,21 @@
             <section class="panel panel-middle">
                 <div class="panel-header">
                     <h2><i class="fas fa-project-diagram"></i> 上下文树状图</h2>
-                    <div class="panel-actions">
+                    <!-- <div class="panel-actions">
                         <button class="btn btn-sm btn-primary" onclick="novelGenerator.exportNovel()" id="exportBtn">
                             <i class="fas fa-download"></i> 导出小说
                         </button>
                         <button class="btn btn-sm btn-success" onclick="novelGenerator.saveNovel()">
                             <i class="fas fa-save"></i> 保存
                         </button>
-                        <button class="btn btn-sm btn-info" onclick="novelGenerator.toggleViewMode()" id="viewModeBtn">
-                            <i class="fas fa-list"></i> 切换视图
-                        </button>
-                    </div>
+                    </div> -->
                 </div>
                 <div class="panel-content">
                     <!-- 树状图容器 -->
                     <div class="tree-container" id="treeContainer">
                         <div class="tree-controls">
                             <div class="tree-toolbar">
-                                <button class="btn btn-sm" onclick="novelGenerator.zoomIn()" title="放大">
+                                <!-- <button class="btn btn-sm" onclick="novelGenerator.zoomIn()" title="放大">
                                     <i class="fas fa-search-plus"></i>
                                 </button>
                                 <button class="btn btn-sm" onclick="novelGenerator.zoomOut()" title="缩小">
@@ -100,7 +130,7 @@
                                 </button>
                                 <div class="tree-stats">
                                     <span id="treeNodeCount">0</span> 个节点
-                                </div>
+                                </div> -->
                             </div>
                         </div>
                         <div class="tree-visualization" id="treeVisualization">
@@ -286,40 +316,7 @@
             color: #dc3545;
         }
         
-        .tree-node {
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        
-        .tree-node:hover {
-            opacity: 0.8;
-        }
-        
-        .tree-node.selected {
-            stroke: #007bff;
-            stroke-width: 3px;
-        }
-        
-        .tree-link {
-            fill: none;
-            stroke: #ccc;
-            stroke-width: 2px;
-        }
-        
-        .tree-label {
-            font-size: 12px;
-            font-weight: 500;
-            fill: #333;
-            pointer-events: none;
-        }
-        
-        .tree-node-icon {
-            font-size: 10px;
-            fill: white;
-            text-anchor: middle;
-            dominant-baseline: central;
-            pointer-events: none;
-        }
+
     </style>
     
     <!-- 右键菜单HTML -->

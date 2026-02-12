@@ -27,19 +27,31 @@ class NovelGenerator {
         this.contextMenu = null;
         this.contextMenuTarget = null;
         
-        // D3树状图相关
-        this.treeSvg = null;
-        this.treeG = null;
-        this.treeZoom = null;
-        this.treeWidth = 1200;  // 增加宽度以容纳更多节点
-        this.treeHeight = 800;  // 增加高度以容纳更多节点
-        this.treeMargin = { top: 40, right: 120, bottom: 40, left: 120 };  // 增加边距
-        this.nodeSpacing = 80;  // 节点间距
-        this.nodeRadius = 12;   // 节点半径
+    // D3树状图相关
+    this.treeSvg = null;
+    this.treeG = null;
+    this.treeZoom = null;
+    this.treeWidth = 1200;  // 增加宽度以容纳更多节点
+    this.treeHeight = 800;  // 增加高度以容纳更多节点
+    this.treeMargin = { top: 40, right: 120, bottom: 40, left: 120 };  // 增加边距
+    this.nodeSpacing = 80;  // 节点间距
+    this.nodeRadius = 12;   // 节点半径
+    
+    // 提示框相关
+    this.tooltip = null;
+    this.tooltipTimeout = null;
+    this.currentTooltipNodeId = null;
         
         // 左侧树状列表相关属性
         this.expandedNodes = new Set(); // 存储展开的节点ID
         this.currentRootNodeId = null; // 当前树状图显示的根节点ID
+        
+        // 多选相关属性
+        this.isCtrlPressed = false;
+        this.isShiftPressed = false;
+        this.lastSelectedNodeId = null;
+        this.multiSelectStartNodeId = null;
+        this.multiSelectEndNodeId = null;
         
         // 绑定事件
         this.bindEvents();
@@ -49,10 +61,12 @@ class NovelGenerator {
     }
     
     async init() {
-        console.log("🚀 初始化AI小说生成器...");
         
         // 初始化右键菜单
         this.initContextMenu();
+        
+        // 初始化提示框
+        this.initTooltip();
         
         // 初始化树状图可视化（只调用一次）
         this.initTreeVisualization();
@@ -102,9 +116,6 @@ class NovelGenerator {
         // 模态框关闭按钮
         document.getElementById('closeModalBtn')?.addEventListener('click', () => this.hideModal());
         
-        // 视图切换按钮
-        document.getElementById('viewModeBtn')?.addEventListener('click', () => this.toggleViewMode());
-        
         // 树状图控制按钮
         document.addEventListener('click', (e) => {
             if (this.contextMenu && this.contextMenu.style.display === 'block') {
@@ -112,11 +123,169 @@ class NovelGenerator {
             }
         });
         
+        // 键盘事件监听（用于多选）
+        document.addEventListener('keydown', (e) => {
+            this.isCtrlPressed = e.ctrlKey || e.metaKey; // metaKey for Mac
+            this.isShiftPressed = e.shiftKey;
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            this.isCtrlPressed = e.ctrlKey || e.metaKey;
+            this.isShiftPressed = e.shiftKey;
+        });
+        
         // 右键菜单项点击事件 - 直接绑定到右键菜单元素
         this.bindContextMenuEvents();
+        
+    // 清空选择按钮
+    const clearSelectionBtn = document.querySelector('.btn-clear-selection');
+    if (clearSelectionBtn) {
+        clearSelectionBtn.addEventListener('click', () => this.clearSelection());
+    }
+    
+    // 左侧选项卡切换按钮
+    const leftTabBtns = document.querySelectorAll('.tab-btn');
+    leftTabBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const tabId = e.target.dataset.tab;
+            if (tabId) {
+                this.switchLeftTab(tabId);
+            }
+        });
+    });
+}
+
+    // 切换左侧选项卡
+    switchLeftTab(tabId) {
+        console.log("📁 切换左侧选项卡:", tabId);
+        
+        // 更新按钮状态
+        const tabBtns = document.querySelectorAll('.tab-btn');
+        tabBtns.forEach(btn => {
+            if (btn.dataset.tab === tabId) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+        
+        // 更新内容显示
+        const tabContents = document.querySelectorAll('.tab-content');
+        tabContents.forEach(content => {
+            if (content.id === `${tabId}Tab`) {
+                content.classList.add('active');
+            } else {
+                content.classList.remove('active');
+            }
+        });
+        
+        // 如果切换到已选中上下文选项卡，渲染已选中上下文列表
+        if (tabId === 'selected-contexts') {
+            this.renderSelectedContexts();
+        }
     }
 
-    bindContextMenuEvents() {
+// 渲染已选中上下文列表
+renderSelectedContexts() {
+    const selectedContextsList = document.getElementById('selectedContextsList');
+    if (!selectedContextsList) return;
+    
+    if (this.selectedContexts.size === 0) {
+        selectedContextsList.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-inbox"></i>
+                <p>暂无已选中的上下文</p>
+                <p class="text-muted">在左侧列表或树状图中选择上下文后，会显示在这里</p>
+            </div>
+        `;
+        return;
+    }
+    
+    let html = '';
+    const selectedContextsArray = Array.from(this.selectedContexts);
+    
+    // 获取已选中上下文的详细信息
+    const selectedContextsData = this.contexts.filter(context => 
+        this.selectedContexts.has(context.id)
+    );
+    
+    // 按类型分组显示
+    const groupedByType = {};
+    selectedContextsData.forEach(context => {
+        const type = context.type || '未知类型';
+        if (!groupedByType[type]) {
+            groupedByType[type] = [];
+        }
+        groupedByType[type].push(context);
+    });
+    
+    // 渲染分组列表
+    Object.keys(groupedByType).forEach(type => {
+        const contextsOfType = groupedByType[type];
+        html += `
+            <div class="selected-contexts-group">
+                <div class="group-header">
+                    <i class="fas ${this.getContextIcon(type)}"></i>
+                    <span class="group-title">${type}</span>
+                    <span class="group-count">${contextsOfType.length} 个</span>
+                </div>
+                <div class="group-items">
+        `;
+        
+        contextsOfType.forEach(context => {
+            const isCurrent = context.id === this.selectedNodeId;
+            const name = context.name || context.title || '未命名';
+            const date = this.formatDate(context.updated_at || context.created_at);
+            
+            html += `
+                <div class="selected-context-item ${isCurrent ? 'current' : ''}" 
+                     data-context-id="${context.id}"
+                     onclick="novelGenerator.handleContextClick('${context.id}')">
+                    <div class="selected-context-icon">
+                        <i class="fas ${this.getContextIcon(type)}"></i>
+                    </div>
+                    <div class="selected-context-info">
+                        <div class="selected-context-title">${name}</div>
+                        <div class="selected-context-meta">
+                            <span class="selected-context-date">${date}</span>
+                            ${isCurrent ? '<span class="current-badge">当前</span>' : ''}
+                        </div>
+                    </div>
+                    <div class="selected-context-actions">
+                        <button class="btn-icon" onclick="novelGenerator.removeFromSelection('${context.id}')" title="移除">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+        
+        html += `
+                </div>
+            </div>
+        `;
+    });
+    
+    selectedContextsList.innerHTML = html;
+}
+
+// 从选择中移除上下文
+removeFromSelection(contextId) {
+    event?.stopPropagation(); // 阻止事件冒泡
+    console.log("❌ 从选择中移除上下文:", contextId);
+    
+    if (this.selectedContexts.has(contextId)) {
+        this.selectedContexts.delete(contextId);
+        this.updateNodeSelectionStyle(contextId);
+        this.updateSelectionCount();
+        this.updateGenerateButtonState();
+        
+        // 重新渲染已选中上下文列表
+        this.renderSelectedContexts();
+    }
+}
+
+bindContextMenuEvents() {
         // 获取右键菜单元素
         const contextMenu = document.getElementById('contextMenu');
         if (!contextMenu) {
@@ -225,16 +394,12 @@ class NovelGenerator {
         try {
             // 首先尝试获取树状结构
             const treeResponse = await fetch(`${this.serverUrl}/api/contexts/tree`);
-            
             if (treeResponse.ok) {
                 const treeData = await treeResponse.json();
-                
                 if (treeData.success && treeData.tree && Array.isArray(treeData.tree)) {
                     this.contextTree = treeData.tree;
-                    
                     // 检查树状结构中的父子关系
-                    this.debugTreeStructure(this.contextTree);
-                    
+                    // this.debugTreeStructure(this.contextTree);
                     // 渲染树状图
                     this.renderTreeVisualization();
                     
@@ -256,7 +421,7 @@ class NovelGenerator {
             }
             
             this.contexts = await response.json();
-            
+            console.log("📂 上下文列表:", this.contexts);
             // 使用普通列表构建树状结构
             this.contextTree = this.contexts;
             
@@ -302,6 +467,7 @@ class NovelGenerator {
     // 构建树状结构
     buildTreeStructure(contexts) {
         // 创建节点映射
+        console.log("构建树状结构:", contexts);
         const nodeMap = new Map();
         contexts.forEach(context => {
             nodeMap.set(context.id, {
@@ -353,12 +519,10 @@ class NovelGenerator {
                      data-level="${level}"
                      style="padding-left: ${indent}px;">
                     <div class="context-tree-item-content" onclick="novelGenerator.handleContextClick('${node.id}')">
-                        <div class="context-tree-item-icon">
-                            <i class="fas ${this.getContextIcon(type)}"></i>
-                        </div>
-                        <div class="context-tree-item-info">
-                            <div class="context-tree-item-title">${name}</div>
                             <div class="context-tree-item-meta">
+                                <div class="context-tree-item-icon">
+                                    <i class="fas ${this.getContextIcon(type)}"></i>
+                                </div>
                                 <span class="context-tree-item-type">${type}</span>
                                 <span class="context-tree-item-date">${this.formatDate(node.updated_at || node.created_at)}</span>
                             </div>
@@ -429,8 +593,26 @@ class NovelGenerator {
     }
     
     handleContextClick(contextId) {
-        // 切换选择状态
-        this.toggleContextSelection(contextId);
+        // 处理多选逻辑
+        if (this.isCtrlPressed) {
+            // Ctrl+点击：添加/移除选择
+            this.toggleContextSelection(contextId);
+        } else if (this.isShiftPressed && this.lastSelectedNodeId) {
+            // Shift+点击：范围选择
+            this.selectRange(this.lastSelectedNodeId, contextId);
+        } else {
+            // 普通点击：只选择当前节点，但不清除其他已选中的节点
+            // 如果当前节点已经被选中，则取消选择它
+            if (this.selectedContexts.has(contextId)) {
+                this.toggleContextSelection(contextId);
+            } else {
+                // 如果当前节点没有被选中，则选择它
+                this.toggleContextSelection(contextId);
+            }
+        }
+        
+        // 更新最后选择的节点
+        this.lastSelectedNodeId = contextId;
         
         // 显示上下文详情
         this.showContextDetails(contextId);
@@ -441,6 +623,12 @@ class NovelGenerator {
         // 更新UI
         this.updateSelectionCount();
         this.updateGenerateButtonState();
+        
+        // 如果当前显示的是已选中上下文选项卡，更新列表
+        const selectedTabBtn = document.querySelector('.tab-btn[data-tab="selected"]');
+        if (selectedTabBtn && selectedTabBtn.classList.contains('active')) {
+            this.renderSelectedContexts();
+        }
     }
     
     // 更新树状图，以指定节点对应的根节点展开
@@ -498,20 +686,163 @@ class NovelGenerator {
     
     toggleContextSelection(contextId) {
         if (this.selectedContexts.has(contextId)) {
+            // 取消选择节点：只取消选中当前节点，不取消选中子节点
             this.selectedContexts.delete(contextId);
             console.log("❌ 取消选择上下文:", contextId);
         } else {
+            // 选择节点：选中当前节点，并递归选中所有子节点
             this.selectedContexts.add(contextId);
             console.log("✅ 选择上下文:", contextId);
+            
+            // 获取所有子节点ID并选中它们
+            const childIds = this.getAllChildNodeIds(contextId);
+            if (childIds.length === 0) {
+                // 如果从树状结构没找到，尝试从扁平列表获取
+                const childIdsFromFlatList = this.getAllChildNodeIdsFromFlatList(contextId);
+                childIdsFromFlatList.forEach(childId => {
+                    if (!this.selectedContexts.has(childId)) {
+                        this.selectedContexts.add(childId);
+                        console.log("✅ 自动选择子节点:", childId);
+                    }
+                });
+            } else {
+                childIds.forEach(childId => {
+                    if (!this.selectedContexts.has(childId)) {
+                        this.selectedContexts.add(childId);
+                        console.log("✅ 自动选择子节点:", childId);
+                    }
+                });
+            }
         }
         
         // 更新UI样式
+        this.updateNodeSelectionStyle(contextId);
+        
+        // 更新所有子节点的UI样式
+        const allChildIds = this.getAllChildNodeIds(contextId);
+        if (allChildIds.length === 0) {
+            const childIdsFromFlatList = this.getAllChildNodeIdsFromFlatList(contextId);
+            childIdsFromFlatList.forEach(childId => {
+                this.updateNodeSelectionStyle(childId);
+            });
+        } else {
+            allChildIds.forEach(childId => {
+                this.updateNodeSelectionStyle(childId);
+            });
+        }
+        
+        // 更新UI状态
+        this.updateSelectionCount();
+        this.updateGenerateButtonState();
+    }
+    
+clearSelection() {
+    // 清除所有选择
+    this.selectedContexts.forEach(contextId => {
+        this.selectedContexts.delete(contextId);
+        this.updateNodeSelectionStyle(contextId);
+    });
+    this.selectedContexts.clear();
+    
+    // 清除树状图中的节点高亮
+    if (this.treeG) {
+        this.treeG.selectAll('.tree-node circle.selected').classed('selected', false);
+        this.treeG.selectAll('.tree-node circle.highlighted').classed('highlighted', false);
+    }
+    
+    // 更新UI状态
+    this.updateSelectionCount();
+    this.updateGenerateButtonState();
+    
+    // 如果当前显示的是已选中上下文选项卡，更新列表
+    const selectedTabBtn = document.querySelector('.tab-btn[data-tab="selected-contexts"]');
+    if (selectedTabBtn && selectedTabBtn.classList.contains('active')) {
+        this.renderSelectedContexts();
+    }
+    
+    console.log("🗑️ 已清除所有选择和高亮");
+}
+    
+    selectRange(startNodeId, endNodeId) {
+        // 获取两个节点之间的所有节点
+        const nodesInRange = this.getNodesBetween(startNodeId, endNodeId);
+        
+        // 选择范围内的所有节点
+        nodesInRange.forEach(nodeId => {
+            if (!this.selectedContexts.has(nodeId)) {
+                this.selectedContexts.add(nodeId);
+                this.updateNodeSelectionStyle(nodeId);
+            }
+        });
+    }
+    
+    getNodesBetween(startNodeId, endNodeId) {
+        // 获取所有节点ID的扁平列表
+        const allNodeIds = this.getAllNodeIds();
+        
+        // 查找两个节点的索引
+        const startIndex = allNodeIds.indexOf(startNodeId);
+        const endIndex = allNodeIds.indexOf(endNodeId);
+        
+        if (startIndex === -1 || endIndex === -1) {
+            return [startNodeId, endNodeId].filter(id => id);
+        }
+        
+        // 获取范围内的节点
+        const start = Math.min(startIndex, endIndex);
+        const end = Math.max(startIndex, endIndex);
+        
+        return allNodeIds.slice(start, end + 1);
+    }
+    
+    getAllNodeIds() {
+        // 从上下文树中获取所有节点ID
+        const nodeIds = [];
+        
+        const collectNodeIds = (nodes) => {
+            for (const node of nodes) {
+                nodeIds.push(node.id);
+                if (node.children && node.children.length > 0) {
+                    collectNodeIds(node.children);
+                }
+            }
+        };
+        
+        if (this.contextTree && this.contextTree.length > 0) {
+            collectNodeIds(this.contextTree);
+        } else if (this.contexts && this.contexts.length > 0) {
+            // 如果树状结构不可用，使用扁平列表
+            return this.contexts.map(context => context.id);
+        }
+        
+        return nodeIds;
+    }
+    
+    updateNodeSelectionStyle(contextId) {
+        // 更新左侧列表中的节点样式
         const contextElement = document.querySelector(`[data-context-id="${contextId}"]`);
         if (contextElement) {
             if (this.selectedContexts.has(contextId)) {
                 contextElement.classList.add('selected');
             } else {
                 contextElement.classList.remove('selected');
+            }
+        }
+        
+        // 更新已选中上下文列表中的节点样式
+        const selectedContextItem = document.querySelector(`.selected-context-item[data-context-id="${contextId}"]`);
+        if (selectedContextItem) {
+            if (this.selectedContexts.has(contextId)) {
+                selectedContextItem.classList.add('selected');
+                // 如果当前节点是选中的上下文，添加current类
+                if (contextId === this.selectedNodeId) {
+                    selectedContextItem.classList.add('current');
+                } else {
+                    selectedContextItem.classList.remove('current');
+                }
+            } else {
+                selectedContextItem.classList.remove('selected');
+                selectedContextItem.classList.remove('current');
             }
         }
     }
@@ -681,6 +1012,12 @@ class NovelGenerator {
         const selectedCountElement = document.getElementById('selectedCount');
         if (selectedCountElement) {
             selectedCountElement.textContent = this.selectedContexts.size;
+        }
+        
+        // 同时更新选项卡徽章
+        const selectedTabBadge = document.getElementById('selectedTabBadge');
+        if (selectedTabBadge) {
+            selectedTabBadge.textContent = this.selectedContexts.size;
         }
     }
     
@@ -977,37 +1314,6 @@ class NovelGenerator {
         document.body.style.overflow = 'auto';
     }
     
-    toggleViewMode() {
-        const viewModeBtn = document.getElementById('viewModeBtn');
-        const contextDetails = document.getElementById('contextDetails');
-        const treeContainer = document.getElementById('treeContainer');
-        
-        if (!viewModeBtn || !contextDetails || !treeContainer) {
-            console.error("❌ 视图切换元素未找到");
-            return;
-        }
-        
-        if (this.treeViewMode === 'graph') {
-            // 切换到列表视图
-            this.treeViewMode = 'list';
-            viewModeBtn.innerHTML = '<i class="fas fa-project-diagram"></i> 切换到图形视图';
-            contextDetails.style.display = 'block';
-            treeContainer.style.display = 'none';
-        } else {
-            // 切换到图形视图
-            this.treeViewMode = 'graph';
-            viewModeBtn.innerHTML = '<i class="fas fa-list"></i> 切换到列表视图';
-            contextDetails.style.display = 'none';
-            treeContainer.style.display = 'block';
-            
-            // 如果树状图数据为空，重新渲染
-            if (!this.treeData && this.contextTree.length > 0) {
-                this.renderTreeVisualization();
-            }
-        }
-        
-        console.log(`🔄 切换到 ${this.treeViewMode} 视图模式`);
-    }
     
     async startServer() {
         console.log("🚀 启动服务器...");
@@ -1192,22 +1498,25 @@ class NovelGenerator {
         console.log("✅ 上下文刷新完成");
     }
     
-    // 添加树状图控制方法
+    // 添加树状图控制方法 - 移除所有动画效果
     zoomIn() {
         if (this.treeSvg && this.treeZoom) {
-            this.treeSvg.transition().duration(300).call(this.treeZoom.scaleBy, 1.2);
+            // 直接调用，没有任何动画
+            this.treeSvg.call(this.treeZoom.scaleBy, 1.2);
         }
     }
     
     zoomOut() {
         if (this.treeSvg && this.treeZoom) {
-            this.treeSvg.transition().duration(300).call(this.treeZoom.scaleBy, 0.8);
+            // 直接调用，没有任何动画
+            this.treeSvg.call(this.treeZoom.scaleBy, 0.8);
         }
     }
     
     resetZoom() {
         if (this.treeSvg && this.treeZoom) {
-            this.treeSvg.transition().duration(300).call(this.treeZoom.transform, d3.zoomIdentity);
+            // 直接调用，没有任何动画
+            this.treeSvg.call(this.treeZoom.transform, d3.zoomIdentity);
         }
     }
     
@@ -1218,7 +1527,8 @@ class NovelGenerator {
             const centerX = this.containerWidth / 2 - (bbox.x + bbox.width / 2);
             const centerY = this.containerHeight / 2 - (bbox.y + bbox.height / 2);
             
-            this.treeSvg.transition().duration(300).call(
+            // 直接调用，没有任何动画
+            this.treeSvg.call(
                 this.treeZoom.transform,
                 d3.zoomIdentity.translate(centerX, centerY).scale(0.8)
             );
@@ -1226,22 +1536,18 @@ class NovelGenerator {
     }
 
     initContextMenu() {
-        console.log("🖱️ 初始化右键菜单...");
-        
         // 获取右键菜单元素
         this.contextMenu = document.getElementById('contextMenu');
         if (!this.contextMenu) {
             console.warn("⚠️ 右键菜单元素不存在");
             return;
         }
-        
         // 获取树状图容器
         const treeContainer = document.getElementById('treeContainer');
         if (!treeContainer) {
             console.warn("⚠️ 树状图容器不存在，无法初始化右键菜单");
             return;
         }
-        
         // 移除现有的事件监听器
         treeContainer.removeEventListener('contextmenu', this.handleTreeContextMenu);
         
@@ -1279,7 +1585,192 @@ class NovelGenerator {
             this.hideContextMenu();
         });
         
-        console.log("✅ 右键菜单初始化完成");
+    }
+    
+    // 初始化提示框
+    initTooltip() {
+        // 如果提示框已经存在，先移除它
+        const existingTooltip = document.getElementById('treeNodeTooltip');
+        if (existingTooltip) {
+            existingTooltip.remove();
+        }
+        
+        // 创建提示框元素
+        this.tooltip = document.createElement('div');
+        this.tooltip.className = 'tree-node-details';
+        this.tooltip.id = 'treeNodeTooltip';
+        
+        // 设置提示框内容结构
+        this.tooltip.innerHTML = `
+            <div class="tree-node-details-header">
+                <div class="tree-node-details-title">节点详情</div>
+                <button class="tree-node-details-close" onclick="novelGenerator.hideTooltip()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="tree-node-details-content">
+                <div class="tree-node-details-item">
+                    <span class="tree-node-details-label">名称:</span>
+                    <span class="tree-node-details-value" id="tooltipNodeName">未命名</span>
+                </div>
+                <div class="tree-node-details-item">
+                    <span class="tree-node-details-label">类型:</span>
+                    <span class="tree-node-details-value" id="tooltipNodeType">未知类型</span>
+                </div>
+                <div class="tree-node-details-item">
+                    <span class="tree-node-details-label">ID:</span>
+                    <span class="tree-node-details-value" id="tooltipNodeId">未知</span>
+                </div>
+                <div class="tree-node-details-item">
+                    <span class="tree-node-details-label">创建时间:</span>
+                    <span class="tree-node-details-value" id="tooltipNodeDate">未知</span>
+                </div>
+                <div class="tree-node-details-item">
+                    <span class="tree-node-details-label">内容预览:</span>
+                    <span class="tree-node-details-value" id="tooltipNodeContent">无内容</span>
+                </div>
+            </div>
+        `;
+        
+        // 将提示框添加到body中，而不是treeContainer中
+        // 这样可以避免被treeContainer清空
+        document.body.appendChild(this.tooltip);
+    }
+    
+    // 显示提示框
+    showTooltip(nodeData, x, y) {
+        // 如果提示框未初始化，尝试重新初始化
+        if (!this.tooltip) {
+            this.initTooltip();
+            if (!this.tooltip) {
+                return;
+            }
+        }
+        
+        // 清除之前的超时
+        if (this.tooltipTimeout) {
+            clearTimeout(this.tooltipTimeout);
+            this.tooltipTimeout = null;
+        }
+        
+        // 设置当前提示框节点ID
+        this.currentTooltipNodeId = nodeData.id;
+        
+        // 安全地更新提示框内容
+        try {
+            // 使用querySelector从tooltip元素内部查找元素，而不是document.getElementById
+            const nameElement = this.tooltip.querySelector('#tooltipNodeName');
+            const typeElement = this.tooltip.querySelector('#tooltipNodeType');
+            const idElement = this.tooltip.querySelector('#tooltipNodeId');
+            const dateElement = this.tooltip.querySelector('#tooltipNodeDate');
+            const contentElement = this.tooltip.querySelector('#tooltipNodeContent');
+            
+            if (nameElement) {
+                nameElement.textContent = nodeData.name || nodeData.title || '未命名';
+            }
+            if (typeElement) {
+                typeElement.textContent = nodeData.type || '未知类型';
+            }
+            if (idElement) {
+                idElement.textContent = nodeData.id || '未知';
+            }
+            if (dateElement) {
+                dateElement.textContent = this.formatDate(nodeData.created_at || nodeData.updated_at) || '未知';
+            }
+            if (contentElement) {
+                let contentPreview = '无内容';
+                if (nodeData.content) {
+                    if (Array.isArray(nodeData.content)) {
+                        contentPreview = nodeData.content.map(item => {
+                            if (typeof item === 'object' && item.content) {
+                                return item.content.substring(0, 50) + (item.content.length > 50 ? '...' : '');
+                            }
+                            return String(item).substring(0, 50) + (String(item).length > 50 ? '...' : '');
+                        }).join('<br>');
+                    } else {
+                        contentPreview = String(nodeData.content).substring(0, 100) + 
+                                       (String(nodeData.content).length > 100 ? '...' : '');
+                    }
+                }
+                contentElement.innerHTML = contentPreview;
+            }
+        } catch (error) {
+            console.error("❌ 更新提示框内容失败:", error);
+            return;
+        }
+        
+        // 设置提示框位置
+        const tooltipWidth = this.tooltip.offsetWidth || 300;
+        const tooltipHeight = this.tooltip.offsetHeight || 200;
+        const containerRect = this.tooltip.parentElement ? this.tooltip.parentElement.getBoundingClientRect() : {
+            right: window.innerWidth,
+            bottom: window.innerHeight,
+            left: 0,
+            top: 0
+        };
+        
+        // 计算位置，确保提示框不会超出容器边界
+        let posX = x + 15;
+        let posY = y + 15;
+        
+        // 如果提示框会超出右侧边界，调整到左侧显示
+        if (posX + tooltipWidth > containerRect.right - 20) {
+            posX = x - tooltipWidth - 15;
+        }
+        
+        // 如果提示框会超出底部边界，调整到上方显示
+        if (posY + tooltipHeight > containerRect.bottom - 20) {
+            posY = y - tooltipHeight - 15;
+        }
+        
+        // 确保位置不会超出左侧和顶部边界
+        posX = Math.max(20, posX);
+        posY = Math.max(20, posY);
+        
+        // 应用位置
+        this.tooltip.style.left = `${posX}px`;
+        this.tooltip.style.top = `${posY}px`;
+        
+        // 显示提示框
+        this.tooltip.classList.add('show');
+        
+        console.log("💡 显示提示框，节点:", nodeData.id, "位置:", posX, posY);
+    }
+    
+    // 隐藏提示框
+    hideTooltip() {
+        if (!this.tooltip) return;
+        
+        // 清除超时
+        if (this.tooltipTimeout) {
+            clearTimeout(this.tooltipTimeout);
+            this.tooltipTimeout = null;
+        }
+        
+        // 隐藏提示框
+        this.tooltip.classList.remove('show');
+        this.currentTooltipNodeId = null;
+        
+        console.log("💡 隐藏提示框");
+    }
+    
+    // 延迟隐藏提示框（用于鼠标移出时的延迟效果）
+    scheduleHideTooltip() {
+        if (this.tooltipTimeout) {
+            clearTimeout(this.tooltipTimeout);
+        }
+        
+        this.tooltipTimeout = setTimeout(() => {
+            this.hideTooltip();
+        }, 300); // 300毫秒延迟，避免快速移动时闪烁
+    }
+    
+    // 取消延迟隐藏
+    cancelHideTooltip() {
+        if (this.tooltipTimeout) {
+            clearTimeout(this.tooltipTimeout);
+            this.tooltipTimeout = null;
+        }
     }
 
     showContextMenu(x, y, nodeId) {
@@ -1445,6 +1936,9 @@ class NovelGenerator {
             `;
         }
         
+        // 生成联系上下文的树状多选下拉框
+        const relatedContextsHtml = this.generateRelatedContextsSelect();
+        
         const modalContent = `
             <div class="add-node-form">
                 <div class="form-group">
@@ -1453,10 +1947,16 @@ class NovelGenerator {
                 </div>
                 ${typeFieldHtml}
                 <div class="form-group">
+                    <label><i class="fas fa-link"></i> 联系上下文</label>
+                    <div class="related-contexts-container">
+                        ${relatedContextsHtml}
+                    </div>
+                </div>
+                <div class="form-group">
                     <label for="nodeContent"><i class="fas fa-file-alt"></i> 节点内容</label>
                     <textarea id="nodeContent" class="form-control" rows="4" placeholder="请输入节点内容..."></textarea>
                 </div>
-                <div class="form-actions">
+                <div class="form-actions" style="display: flex; gap: 10px; justify-content: flex-end;">
                     <button class="btn btn-secondary" onclick="novelGenerator.hideModal()">取消</button>
                     <button class="btn btn-primary" onclick="novelGenerator.submitAddNode()">添加节点</button>
                 </div>
@@ -1466,6 +1966,9 @@ class NovelGenerator {
         const modalTitle = parentId ? '<i class="fas fa-plus-circle"></i> 添加子节点' : '<i class="fas fa-plus"></i> 添加根节点';
         console.log("📋 模态框标题:", modalTitle, "是否为根节点:", isRootNode, "父节点类型:", parentType);
         this.showModal(modalTitle, modalContent);
+        
+        // 初始化树状多选下拉框
+        this.initRelatedContextsSelect();
     }
 
     async submitAddNode() {
@@ -1477,7 +1980,11 @@ class NovelGenerator {
         const nodeType = document.getElementById('nodeType')?.value || '自定义';
         const nodeContent = document.getElementById('nodeContent')?.value || '';
         
-        console.log("节点信息:", { nodeName, nodeType, nodeContent });
+        // 获取选中的联系上下文ID
+        const relatedContextIds = this.getSelectedRelatedContexts();
+        console.log("📋 选中的联系上下文ID:", relatedContextIds);
+        
+        console.log("节点信息:", { nodeName, nodeType, nodeContent, relatedContextIds });
         
         try {
             // 处理parentId - 优先使用modalParentId，因为它是在showAddNodeModal中存储的
@@ -1511,16 +2018,49 @@ class NovelGenerator {
                 console.log("🔄 清理父节点ID为null");
             }
             
-            // 构建请求数据
-            const requestData = {
+            // 获取选中上下文的内容信息（只要对应的节点内容）
+            let contextInfoArray = [];
+            if (relatedContextIds.length > 0) {
+                // 获取选中上下文的内容
+                const contextsData = await this.getRelatedContextsData(relatedContextIds);
+                console.log("📋 选中上下文的内容信息:", contextsData);
+                
+                // 构建上下文信息数组，每个元素包含 {节点类型, 节点内容}
+                contextInfoArray = contextsData.map(context => {
+                    // 提取内容
+                    let content = '';
+                    if (Array.isArray(context.content)) {
+                        content = context.content.map(item => {
+                            if (typeof item === 'object' && item.content) {
+                                return item.content;
+                            }
+                            return String(item);
+                        }).join('\n');
+                    } else {
+                        content = String(context.content || '');
+                    }
+                    
+                    return {
+                        type: context.type || '未知类型',
+                        content: content
+                    };
+                });
+                
+                console.log("📋 构建的上下文信息数组:", contextInfoArray);
+            }
+            
+            // 构建封装好的数据结构 - 按照用户要求封装
+            // {节点名称， 节点类型， 上下文信息:[{节点类型,节点内容 }], 节点内容}
+            const nodeData = {
                 name: nodeName,
                 type: nodeType,
+                context_info: contextInfoArray, // 上下文信息数组
                 content: nodeContent,
-                parent_id: processedParentId
+                parent_id: processedParentId // 保留parent_id用于树状结构
             };
             
             console.log("📤 发送添加节点请求到:", `${this.serverUrl}/api/context/create`);
-            console.log("📤 请求数据:", JSON.stringify(requestData, null, 2));
+            console.log("📤 封装的数据结构:", JSON.stringify(nodeData, null, 2));
             
             // 发送请求到后端 - 注意：API路径是 /api/context/create
             const response = await fetch(`${this.serverUrl}/api/context/create`, {
@@ -1528,7 +2068,7 @@ class NovelGenerator {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(requestData)
+                body: JSON.stringify(nodeData)
             });
             
             console.log("📤 添加节点响应状态:", response.status, "状态文本:", response.statusText);
@@ -1551,16 +2091,8 @@ class NovelGenerator {
             // 刷新上下文
             await this.refreshContexts();
             
-                // 显示成功消息
-                this.showModal('<i class="fas fa-check-circle"></i> 添加成功', `
-                    <div class="success-message">
-                        <i class="fas fa-check-circle"></i>
-                        <h3>节点添加成功</h3>
-                        <p>${nodeName} 已成功添加到${processedParentId ? '子节点' : '根节点'}。</p>
-                        <p>节点ID: ${result.context_id || '未知'}</p>
-                        <p>消息: ${result.message || '操作成功'}</p>
-                    </div>
-                `);
+            // 显示返回的结果
+            this.showNodeCreationResult(result, nodeName, processedParentId, relatedContextIds.length);
             
         } catch (error) {
             console.error("❌ 添加节点失败:", error);
@@ -1611,7 +2143,7 @@ class NovelGenerator {
                     <label for="editNodeContent"><i class="fas fa-file-alt"></i> 节点内容</label>
                     <textarea id="editNodeContent" class="form-control" rows="4">${nodeData.content || ''}</textarea>
                 </div>
-                <div class="form-actions">
+                <div class="form-actions" style="display: flex; gap: 10px; justify-content: flex-end;">
                     <button class="btn btn-secondary" onclick="novelGenerator.hideModal()">取消</button>
                     <button class="btn btn-primary" onclick="novelGenerator.submitEditNode('${nodeData.id}')">保存修改</button>
                 </div>
@@ -2038,8 +2570,6 @@ class NovelGenerator {
     }
 
     initTreeVisualization() {
-        console.log("🌳 初始化树状图可视化...");
-        
         const treeContainer = document.getElementById('treeContainer');
         if (!treeContainer) {
             console.warn("⚠️ 树状图容器不存在");
@@ -2049,15 +2579,46 @@ class NovelGenerator {
         // 先清空容器
         treeContainer.innerHTML = '';
         
-        // 获取容器实际尺寸 - 确保容器有内容才能获取正确尺寸
-        const containerWidth = treeContainer.clientWidth || this.treeWidth;
-        const containerHeight = treeContainer.clientHeight || this.treeHeight;
+        // 使用更可靠的方法获取容器尺寸
+        // 首先确保容器有明确的尺寸
+        const ensureContainerSize = () => {
+            // 获取父容器尺寸
+            const parentContainer = treeContainer.parentElement;
+            let parentWidth = 0;
+            let parentHeight = 0;
+            
+            if (parentContainer) {
+                parentWidth = parentContainer.clientWidth || 0;
+                parentHeight = parentContainer.clientHeight || 0;
+            }
+            
+            // 使用父容器尺寸或默认尺寸
+            const containerWidth = treeContainer.clientWidth || parentWidth || this.treeWidth;
+            const containerHeight = treeContainer.clientHeight || parentHeight || this.treeHeight;
+            
+            // 如果容器尺寸仍然为0，使用默认尺寸并设置CSS
+            if (containerWidth <= 0 || containerHeight <= 0) {
+                console.warn("⚠️ 容器尺寸为0，使用默认尺寸并设置CSS");
+                treeContainer.style.width = `${this.treeWidth}px`;
+                treeContainer.style.height = `${this.treeHeight}px`;
+                treeContainer.style.minHeight = '400px';
+                treeContainer.style.minWidth = '600px';
+                
+                return {
+                    width: this.treeWidth,
+                    height: this.treeHeight
+                };
+            }
+            
+            return {
+                width: containerWidth,
+                height: containerHeight
+            };
+        };
         
-        console.log(`📏 树状图容器尺寸: ${containerWidth}x${containerHeight}`);
-        
-        // 如果容器尺寸为0，使用默认尺寸
-        const actualWidth = containerWidth > 0 ? containerWidth : this.treeWidth;
-        const actualHeight = containerHeight > 0 ? containerHeight : this.treeHeight;
+        const containerSize = ensureContainerSize();
+        const actualWidth = containerSize.width;
+        const actualHeight = containerSize.height;
         
         // 创建SVG容器
         const svg = d3.select(treeContainer)
@@ -2067,93 +2628,32 @@ class NovelGenerator {
             .attr('class', 'tree-svg')
             .style('background-color', 'var(--bg-color)');
         
-        // 创建分组用于缩放和平移
+        // 创建分组用于绘制
         const g = svg.append('g')
             .attr('transform', `translate(${this.treeMargin.left},${this.treeMargin.top})`);
         
-        // 设置缩放行为 - 增加缩放范围
-        const zoom = d3.zoom()
-            .scaleExtent([0.05, 5])  // 增加缩放范围
+        // 创建拖动行为 - 完全禁用缩放，允许大范围拖动
+        const zoomBehavior = d3.zoom()
+            .scaleExtent([1, 1]) // 完全禁用缩放，锁定缩放比例为1
+            .translateExtent([[-actualWidth * 2, -actualHeight * 2], [actualWidth * 3, actualHeight * 3]]) // 允许大范围拖动
             .on('zoom', (event) => {
-                // 使用transform属性而不是改变元素位置
-                g.attr('transform', event.transform);
+                // 只应用平移变换，不应用缩放
+                g.attr('transform', `translate(${event.transform.x},${event.transform.y})`);
             });
         
-        svg.call(zoom);
-        
-        // 初始缩放和平移，使树状图居中显示
-        const initialScale = 0.8;
-        const initialX = (actualWidth - this.treeMargin.left - this.treeMargin.right) / 2;
-        const initialY = (actualHeight - this.treeMargin.top - this.treeMargin.bottom) / 2;
-        
-        svg.call(zoom.transform, d3.zoomIdentity
-            .translate(initialX, initialY)
-            .scale(initialScale));
+        // 应用zoom行为到SVG
+        svg.call(zoomBehavior);
         
         // 存储引用
         this.treeSvg = svg;
         this.treeG = g;
-        this.treeZoom = zoom;
+        this.treeZoom = zoomBehavior;
         this.containerWidth = actualWidth;
         this.containerHeight = actualHeight;
-        
-        console.log("✅ 树状图可视化初始化完成");
     }
 
     renderTreeVisualization() {
-            // 添加固定节点样式
-    if (!document.getElementById('tree-node-fix-styles')) {
-        const styleElement = document.createElement('style');
-        styleElement.id = 'tree-node-fix-styles';
-        styleElement.textContent = `
-          .tree-node {
-            cursor: pointer;
-            /* 移除所有过渡效果，防止晃动 */
-            transition: none !important;
-          }
-          
-          .tree-node:hover {
-            /* 移除所有悬停效果，防止视觉变化 */
-            opacity: 1 !important;
-            transform: none !important;
-          }
-          
-          .tree-node circle {
-            /* 移除所有过渡效果 */
-            transition: none !important;
-          }
-          
-          .tree-node:hover circle,
-          .tree-node.selected circle {
-            stroke: var(--primary-color) !important;
-            stroke-width: 2px !important; /* 固定宽度，避免尺寸变化 */
-            fill-opacity: 0.9;
-          }
-          
-          .tree-node circle.selected-node {
-            stroke: var(--primary-color) !important;
-            stroke-width: 3px !important;
-            /* 彻底移除所有视觉效果，防止晃动 */
-            filter: none !important;
-            animation: none !important;
-            transition: none !important;
-          }
-          
-          .tree-node circle.hovered-node {
-            stroke: var(--primary-color) !important;
-            stroke-width: 2px !important;
-            /* 彻底移除所有视觉效果，防止晃动 */
-            filter: none !important;
-            animation: none !important;
-            transition: none !important;
-          }
-        `;
-        document.head.appendChild(styleElement);
-    }
-    
-        
         console.log("🎨 渲染树状图...");
-        
         if (!this.treeG) {
             console.warn("⚠️ 无法渲染树状图：树状图未初始化");
             // 尝试重新初始化
@@ -2196,7 +2696,6 @@ class NovelGenerator {
             return;
         }
         
-        console.log("🌳 树状图数据:", this.contextTree);
         
         // 计算可用空间
         const availableWidth = this.containerWidth - this.treeMargin.left - this.treeMargin.right;
@@ -2229,7 +2728,6 @@ class NovelGenerator {
             return;
         }
         
-        console.log("🌲 D3树根节点:", root);
         
         // 计算节点位置
         const treeData = treeLayout(root);
@@ -2243,13 +2741,11 @@ class NovelGenerator {
             if (d.y > maxY) maxY = d.y;
         });
         
-        console.log(`📊 树状图边界: x[${minX.toFixed(1)}, ${maxX.toFixed(1)}], y[${minY.toFixed(1)}, ${maxY.toFixed(1)}]`);
         
         // 计算缩放比例，使树状图适应可用空间
         const treeWidth = maxY - minY;
         const treeHeight = maxX - minX;
         
-        console.log(`📏 树状图尺寸: ${treeWidth.toFixed(1)}x${treeHeight.toFixed(1)}`);
         
         // 如果树状图很小，使用较大的缩放
         let scale = 1;
@@ -2257,14 +2753,12 @@ class NovelGenerator {
             const scaleX = availableWidth / treeWidth;
             const scaleY = availableHeight / treeHeight;
             scale = Math.min(scaleX, scaleY, 1) * 0.7;  // 留出更多边距
-            console.log(`📈 计算缩放: scaleX=${scaleX.toFixed(2)}, scaleY=${scaleY.toFixed(2)}, 最终scale=${scale.toFixed(2)}`);
         }
         
         // 计算偏移量，使树状图居中
         const offsetX = (availableWidth - treeWidth * scale) / 2 - minY * scale;
         const offsetY = (availableHeight - treeHeight * scale) / 2 - minX * scale;
         
-        console.log(`📍 偏移量: offsetX=${offsetX.toFixed(1)}, offsetY=${offsetY.toFixed(1)}`);
         
         // 绘制连接线
         const links = this.treeG.selectAll('.tree-link')
@@ -2276,8 +2770,7 @@ class NovelGenerator {
                 .x(d => d.y * scale + offsetX)
                 .y(d => d.x * scale + offsetY))
             .attr('fill', 'none')
-            .attr('stroke', 'var(--border-color)')
-            .attr('stroke-width', 2)
+            // .attr('stroke-width', 2)
             .attr('stroke-opacity', 0.6);
         
         // 绘制节点 - 确保节点位置固定
@@ -2294,8 +2787,12 @@ class NovelGenerator {
             .attr('r', this.nodeRadius)
             .attr('fill', d => this.getNodeColor(d.data.type))
             .attr('stroke', '#fff')
-            .attr('stroke-width', 3)
-            .attr('cursor', 'pointer');
+            .attr('stroke-width', 2)
+            .attr('cursor', 'pointer')
+            .attr('class', 'tree-node-circle')
+            // 如果节点被选中，应用选中样式
+            .classed('selected', d => this.selectedContexts.has(d.data.id))
+            .classed('highlighted', d => this.selectedContexts.has(d.data.id));
         
         // 添加节点文本
         nodes.append('text')
@@ -2309,38 +2806,73 @@ class NovelGenerator {
             .attr('pointer-events', 'none')
             .text(d => d.data.name || d.data.title || '未命名');
         
-        // 添加节点点击事件
+        // 添加节点点击事件 - 使用更稳定的方式
         nodes.on('click', (event, d) => {
             event.stopPropagation(); // 阻止事件冒泡
+            event.preventDefault(); // 阻止默认行为
             console.log("🖱️ 点击树节点:", d.data.id);
-            this.handleTreeNodeClick(d.data.id);
+            
+            // 立即处理点击，避免任何延迟
+            setTimeout(() => {
+                this.handleTreeNodeClick(d.data.id);
+            }, 0);
+        });
+        
+        // 添加节点悬停效果和提示框
+        nodes.on('mouseenter', (event, d) => {
+            event.stopPropagation();
+            
+            const circle = d3.select(event.currentTarget).select('.tree-node-circle');
+            const nodeId = d.data.id;
+            
+            // 如果节点没有被选中，才应用悬停样式
+            if (!this.selectedContexts.has(nodeId)) {
+                circle.attr('stroke-width', 3)
+                      .attr('stroke', '#ff9800');
+            }
+            
+            // 显示提示框
+            this.showTooltip(d.data, event.clientX, event.clientY);
+        })
+        .on('mouseleave', (event, d) => {
+            event.stopPropagation();
+            
+            const circle = d3.select(event.currentTarget).select('.tree-node-circle');
+            const nodeId = d.data.id;
+            
+            // 如果是选中的节点，保持选中样式
+            if (this.selectedContexts.has(nodeId)) {
+                circle.attr('stroke-width', 4)
+                      .attr('stroke', '#0084ff');
+            } else {
+                circle.attr('stroke-width', 2)
+                      .attr('stroke', '#fff');
+            }
+            
+            // 延迟隐藏提示框
+            this.scheduleHideTooltip();
         });
 
         
-        // 修改节点悬停事件，移除可能导致节点移动的transform
-        // 在renderTreeVisualization方法中的节点事件部分替换为：
-        nodes
-        .on('mouseenter', debounce((event, d) => {
-            event.stopPropagation();
-            // 只改变颜色和描边，不改变位置
-            d3.select(event.currentTarget).select('circle')
-                .attr('stroke', 'var(--primary-color)')
-                .attr('stroke-width', 3);
-        }, 30))
-        .on('mouseleave', debounce((event, d) => {
-            event.stopPropagation();
-            // 恢复原始样式
-            const originalStroke = d.data.id === this.selectedNodeId ? 'var(--primary-color)' : '#fff';
-            const originalStrokeWidth = d.data.id === this.selectedNodeId ? 3 : 2;
-            
-            d3.select(event.currentTarget).select('circle')
-                .attr('stroke', originalStroke)
-                .attr('stroke-width', originalStrokeWidth);
-        }, 30));
-
+        // 节点悬停事件 - 完全移除任何动画效果，只改变颜色
+        // nodes
+        // .on('mouseenter', (event, d) => {
+        //     event.stopPropagation();
         
-        console.log(`✅ 树状图渲染完成，节点数: ${treeData.descendants().length}, 缩放: ${scale.toFixed(2)}`);
+        //     const node = d3.select(event.currentTarget);
         
+        //     // 只改视觉，不改布局属性
+        //     node.select("circle")
+        //         .classed("hovered-node", true);
+        // })
+        // .on('mouseleave', (event, d) => {
+        //     event.stopPropagation();
+        
+        //     const node = d3.select(event.currentTarget);
+        
+        //     node.select("circle")
+        //         .classed("hovered-node", false);
+        // });
         // 更新节点计数显示
         this.updateTreeNodeCount(treeData.descendants().length);
     }
@@ -2353,21 +2885,10 @@ class NovelGenerator {
     }
 
     buildD3Tree(treeData) {
-        console.log("🌲 构建D3树，数据:", treeData);
-        console.log("🌲 当前根节点ID:", this.currentRootNodeId);
-        
         if (!treeData || treeData.length === 0) {
             console.warn("⚠️ 树状数据为空");
             return null;
         }
-        
-        // 详细检查数据结构
-        console.log("🔍 详细检查数据结构:");
-        console.log("📊 数据长度:", treeData.length);
-        console.log("📊 第一个节点:", treeData[0]);
-        console.log("📊 第一个节点的children字段:", treeData[0].children);
-        console.log("📊 第一个节点的parent_id字段:", treeData[0].parent_id);
-        
         // 检查数据是否已经是树状结构（包含children字段）
         const firstNode = treeData[0];
         if (firstNode && firstNode.children !== undefined) {
@@ -2403,8 +2924,6 @@ class NovelGenerator {
             return d3.hierarchy(virtualRoot);
         }
         
-        // 如果数据是扁平列表，使用原来的逻辑
-        console.log("🌳 数据是扁平列表，重新构建树状结构");
         
         // 如果指定了当前根节点ID，查找该节点作为根节点
         if (this.currentRootNodeId) {
@@ -2422,9 +2941,6 @@ class NovelGenerator {
         
         // 找到根节点（没有父节点的节点）
         const rootNodes = treeData.filter(node => !node.parent_id || node.parent_id === null || node.parent_id === '');
-        
-        console.log("🌳 根节点数量:", rootNodes.length, "总节点数:", treeData.length);
-        console.log("🌳 根节点列表:", rootNodes.map(n => ({id: n.id, name: n.name, parent_id: n.parent_id})));
         
         if (rootNodes.length === 0 && treeData.length > 0) {
             // 如果没有明确的根节点，使用第一个节点作为根
@@ -2467,6 +2983,576 @@ class NovelGenerator {
         return null;
     }
     
+    // 生成联系上下文的树状多选下拉框HTML - 现代化设计
+    generateRelatedContextsSelect() {
+        if (!this.contextTree || this.contextTree.length === 0) {
+            return `
+                <div class="tree-multiselect-empty">
+                    <i class="fas fa-inbox"></i>
+                    <p>暂无上下文数据</p>
+                    <p class="text-muted">请先添加一些上下文</p>
+                </div>
+            `;
+        }
+        
+        // 构建现代化的树状多选组件
+        let html = `
+            <div class="tree-multiselect" id="relatedContextsSelect">
+                <div class="tree-multiselect-header">
+                    <input type="text" 
+                           class="tree-search-input" 
+                           placeholder="搜索上下文..." 
+                           id="treeSearchInput"
+                           oninput="novelGenerator.filterTreeNodes(this.value)">
+                    <div class="tree-multiselect-actions">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="novelGenerator.selectAllTreeNodes()">
+                            <i class="fas fa-check-square"></i> 全选
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="novelGenerator.deselectAllTreeNodes()">
+                            <i class="fas fa-square"></i> 全不选
+                        </button>
+                    </div>
+                </div>
+                <div class="tree-multiselect-container" id="treeMultiselectContainer">
+                    <div class="tree-multiselect-tree" id="relatedContextsTree">
+        `;
+        
+        // 递归生成树节点 - 现代化设计
+        const generateTreeNode = (node, level = 0) => {
+            const hasChildren = node.children && node.children.length > 0;
+            const nodeId = `context_${node.id}`;
+            const nodeName = node.name || node.title || '未命名';
+            const nodeType = node.type || '未知类型';
+            const icon = this.getContextIcon(nodeType);
+            
+            let nodeHtml = `
+                <div class="tree-node-item" data-level="${level}" data-node-id="${node.id}">
+                    <div class="tree-node-content">
+                        <label class="tree-node-checkbox">
+                            <input type="checkbox" value="${node.id}" class="related-context-checkbox" id="${nodeId}">
+                            <span class="tree-node-name">${nodeName}</span>
+                        </label>
+                        <span class="tree-node-type">${nodeType}</span>
+            `;
+            
+            // 如果有子节点，添加展开/折叠按钮
+            if (hasChildren) {
+                nodeHtml += `
+                        <button type="button" class="tree-node-toggle" data-node-id="${node.id}" title="展开/折叠" onclick="novelGenerator.toggleTreeNode(this)">
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                `;
+            }
+            
+            nodeHtml += `
+                    </div>
+            `;
+            
+            // 如果有子节点，添加子节点容器
+            if (hasChildren) {
+                nodeHtml += `<div class="tree-node-children" id="children_${node.id}">`;
+                for (const child of node.children) {
+                    nodeHtml += generateTreeNode(child, level + 1);
+                }
+                nodeHtml += `</div>`;
+            }
+            
+            nodeHtml += `</div>`;
+            return nodeHtml;
+        };
+        
+        // 生成所有根节点
+        for (const node of this.contextTree) {
+            html += generateTreeNode(node);
+        }
+        
+        html += `
+                    </div>
+                </div>
+                <div class="tree-multiselect-footer">
+                    <div class="selected-count">
+                        <i class="fas fa-check-circle"></i>
+                        已选择: <span id="selectedContextsCount">0</span> 个上下文
+                    </div>
+                    <div class="selected-tags" id="selectedContextsTags">
+                        <!-- 选中的上下文将在这里显示为标签 -->
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        return html;
+    }
+    
+    // 初始化树状多选下拉框
+    initRelatedContextsSelect() {
+        // 等待DOM渲染完成
+        setTimeout(() => {
+            // 绑定复选框变化事件
+            const checkboxes = document.querySelectorAll('.related-context-checkbox');
+            checkboxes.forEach(checkbox => {
+                checkbox.addEventListener('change', (event) => {
+                    this.handleTreeNodeCheckboxChange(event);
+                });
+            });
+            
+            // 初始化选中计数
+            this.updateSelectedContexts();
+        }, 100);
+    }
+    
+    // 处理树节点复选框变化
+    handleTreeNodeCheckboxChange(event) {
+        const checkbox = event.target;
+        const nodeId = checkbox.value;
+        const isChecked = checkbox.checked;
+        
+        // 获取对应的树节点项
+        const nodeItem = checkbox.closest('.tree-node-item');
+        if (!nodeItem) return;
+        
+        // 如果选中父节点，递归选中所有子节点
+        if (isChecked) {
+            this.selectAllChildNodes(nodeId);
+        } else {
+            // 如果取消选中父节点，递归取消选中所有子节点
+            this.deselectAllChildNodes(nodeId);
+        }
+        
+        // 更新父节点的选中状态（如果子节点状态变化）
+        this.updateParentNodeState(nodeId);
+        
+        // 更新选中计数和显示
+        this.updateSelectedContexts();
+    }
+    
+    // 递归选中所有子节点
+    selectAllChildNodes(parentNodeId) {
+        const childrenContainer = document.getElementById(`children_${parentNodeId}`);
+        if (!childrenContainer) return;
+        
+        // 选中当前容器的所有直接子节点的复选框
+        const childCheckboxes = childrenContainer.querySelectorAll('.related-context-checkbox');
+        childCheckboxes.forEach(checkbox => {
+            checkbox.checked = true;
+            
+            // 递归处理子节点的子节点
+            const childNodeId = checkbox.value;
+            this.selectAllChildNodes(childNodeId);
+        });
+    }
+    
+    // 递归取消选中所有子节点
+    deselectAllChildNodes(parentNodeId) {
+        const childrenContainer = document.getElementById(`children_${parentNodeId}`);
+        if (!childrenContainer) return;
+        
+        // 取消选中当前容器的所有直接子节点的复选框
+        const childCheckboxes = childrenContainer.querySelectorAll('.related-context-checkbox');
+        childCheckboxes.forEach(checkbox => {
+            checkbox.checked = false;
+            
+            // 递归处理子节点的子节点
+            const childNodeId = checkbox.value;
+            this.deselectAllChildNodes(childNodeId);
+        });
+    }
+    
+    // 更新父节点的选中状态
+    updateParentNodeState(nodeId) {
+        // 查找父节点
+        const nodeItem = document.querySelector(`.tree-node-item[data-node-id="${nodeId}"]`);
+        if (!nodeItem) return;
+        
+        // 查找父容器
+        const parentContainer = nodeItem.parentElement;
+        if (!parentContainer || !parentContainer.classList.contains('tree-node-children')) return;
+        
+        // 获取父节点ID
+        const parentNodeId = parentContainer.id.replace('children_', '');
+        const parentNodeItem = document.querySelector(`.tree-node-item[data-node-id="${parentNodeId}"]`);
+        if (!parentNodeItem) return;
+        
+        const parentCheckbox = parentNodeItem.querySelector('.related-context-checkbox');
+        if (!parentCheckbox) return;
+        
+        // 获取所有子节点复选框
+        const childCheckboxes = parentContainer.querySelectorAll('.related-context-checkbox');
+        const childCount = childCheckboxes.length;
+        
+        if (childCount === 0) return;
+        
+        // 统计选中状态
+        let checkedCount = 0;
+        let indeterminateCount = 0;
+        
+        childCheckboxes.forEach(checkbox => {
+            if (checkbox.checked) {
+                checkedCount++;
+            } else if (checkbox.indeterminate) {
+                indeterminateCount++;
+            }
+        });
+        
+        // 更新父节点复选框状态
+        // 根据用户要求：选了子节点，不能把父节点选上
+        // 所以即使所有子节点都选中，父节点也只显示为部分选中状态
+        if (checkedCount === childCount) {
+            // 所有子节点都选中：父节点显示为部分选中状态
+            parentCheckbox.checked = false;
+            parentCheckbox.indeterminate = true;
+        } else if (checkedCount === 0 && indeterminateCount === 0) {
+            // 没有子节点选中
+            parentCheckbox.checked = false;
+            parentCheckbox.indeterminate = false;
+        } else {
+            // 部分子节点选中
+            parentCheckbox.checked = false;
+            parentCheckbox.indeterminate = true;
+        }
+        
+        // 递归更新更上层的父节点
+        this.updateParentNodeState(parentNodeId);
+    }
+    
+    // 切换树节点展开/折叠
+    toggleTreeNode(button) {
+        const nodeId = button.dataset.nodeId;
+        const childrenContainer = document.getElementById(`children_${nodeId}`);
+        const icon = button.querySelector('i');
+        
+        if (childrenContainer.classList.contains('expanded')) {
+            childrenContainer.classList.remove('expanded');
+            icon.className = 'fas fa-chevron-right';
+            button.classList.remove('expanded');
+        } else {
+            childrenContainer.classList.add('expanded');
+            icon.className = 'fas fa-chevron-down';
+            button.classList.add('expanded');
+        }
+    }
+    
+    // 全选树节点
+    selectAllTreeNodes() {
+        const checkboxes = document.querySelectorAll('.related-context-checkbox');
+        // 首先，选中所有节点
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = true;
+            checkbox.indeterminate = false;
+        });
+        // 更新选中计数
+        this.updateSelectedContexts();
+    }
+    
+    // 全不选树节点
+    deselectAllTreeNodes() {
+        const checkboxes = document.querySelectorAll('.related-context-checkbox');
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = false;
+            checkbox.indeterminate = false;
+        });
+        // 更新选中计数
+        this.updateSelectedContexts();
+    }
+    
+    // 过滤树节点
+    filterTreeNodes(searchTerm) {
+        const treeNodes = document.querySelectorAll('.tree-node-item');
+        const searchLower = searchTerm.toLowerCase().trim();
+        
+        if (!searchTerm) {
+            // 显示所有节点
+            treeNodes.forEach(node => {
+                node.style.display = 'flex';
+                node.classList.remove('highlighted');
+            });
+            return;
+        }
+        
+        treeNodes.forEach(node => {
+            const label = node.querySelector('.tree-node-name');
+            if (label) {
+                const text = label.textContent || label.innerText;
+                if (text.toLowerCase().includes(searchLower)) {
+                    node.style.display = 'flex';
+                    node.classList.add('highlighted');
+                    // 确保父节点展开
+                    this.expandParentNodes(node);
+                } else {
+                    node.style.display = 'none';
+                    node.classList.remove('highlighted');
+                }
+            }
+        });
+    }
+    
+    // 展开父节点
+    expandParentNodes(nodeElement) {
+        let current = nodeElement;
+        while (current) {
+            const parentContainer = current.parentElement;
+            if (parentContainer && parentContainer.classList.contains('tree-node-children')) {
+                // 找到父节点的ID
+                const parentId = parentContainer.id.replace('children_', '');
+                const parentNode = document.querySelector(`[data-node-id="${parentId}"]`);
+                if (parentNode) {
+                    const toggleButton = parentNode.querySelector('.tree-node-toggle');
+                    const childrenContainer = document.getElementById(`children_${parentId}`);
+                    if (toggleButton && childrenContainer && !childrenContainer.classList.contains('expanded')) {
+                        childrenContainer.classList.add('expanded');
+                        const icon = toggleButton.querySelector('i');
+                        if (icon) {
+                            icon.className = 'fas fa-chevron-down';
+                            toggleButton.classList.add('expanded');
+                        }
+                    }
+                }
+            }
+            current = parentContainer ? parentContainer.parentElement : null;
+        }
+    }
+    
+    // 更新选中的上下文
+    updateSelectedContexts() {
+        const checkboxes = document.querySelectorAll('.related-context-checkbox:checked');
+        const count = checkboxes.length;
+        const countElement = document.getElementById('selectedContextsCount');
+        const tagsElement = document.getElementById('selectedContextsTags');
+        
+        if (countElement) {
+            countElement.textContent = count;
+        }
+        
+        if (tagsElement) {
+            if (count === 0) {
+                tagsElement.innerHTML = '<span class="text-muted">未选择任何上下文</span>';
+            } else {
+                const selectedTags = [];
+                checkboxes.forEach(checkbox => {
+                    const nodeItem = checkbox.closest('.tree-node-item');
+                    if (nodeItem) {
+                        const nameElement = nodeItem.querySelector('.tree-node-name');
+                        const typeElement = nodeItem.querySelector('.tree-node-type');
+                        if (nameElement) {
+                            const name = nameElement.textContent || nameElement.innerText;
+                            const type = typeElement ? typeElement.textContent : '未知类型';
+                            const icon = this.getContextIcon(type);
+                            selectedTags.push(`
+                                <span class="selected-tag" title="${type}">
+                                    <i class="fas ${icon}"></i> ${name}
+                                </span>
+                            `);
+                        }
+                    }
+                });
+                
+                tagsElement.innerHTML = selectedTags.join('');
+            }
+        }
+    }
+    
+    // 获取选中的联系上下文ID
+    getSelectedRelatedContexts() {
+        const checkboxes = document.querySelectorAll('.related-context-checkbox:checked');
+        const selectedIds = [];
+        checkboxes.forEach(checkbox => {
+            selectedIds.push(checkbox.value);
+        });
+        return selectedIds;
+    }
+    
+    // 获取选中上下文的内容数据
+    async getRelatedContextsData(contextIds) {
+        if (!contextIds || contextIds.length === 0) {
+            return [];
+        }
+        
+        const contextsData = [];
+        
+        for (const contextId of contextIds) {
+            try {
+                const response = await fetch(`${this.serverUrl}/api/context/${contextId}`);
+                if (response.ok) {
+                    const context = await response.json();
+                    // 只提取我们需要的信息：ID、名称、类型和内容
+                    contextsData.push({
+                        id: context.id,
+                        name: context.name || '未命名',
+                        type: context.type || '未知类型',
+                        content: context.content || ''
+                    });
+                } else {
+                    console.warn(`⚠️ 无法获取上下文 ${contextId} 的详情: HTTP ${response.status}`);
+                }
+            } catch (error) {
+                console.error(`❌ 获取上下文 ${contextId} 数据失败:`, error);
+            }
+        }
+        
+        return contextsData;
+    }
+    
+    // 显示节点创建结果
+    showNodeCreationResult(result, nodeName, parentId, relatedContextCount) {
+        let resultHtml = `
+            <div class="node-creation-result">
+                <div class="result-header">
+                    <i class="fas fa-check-circle"></i>
+                    <h3>节点创建结果</h3>
+                </div>
+                <div class="result-details">
+                    <div class="result-item">
+                        <span class="result-label">操作状态:</span>
+                        <span class="result-value ${result.success ? 'success' : 'error'}">
+                            ${result.success ? '✅ 成功' : '❌ 失败'}
+                        </span>
+                    </div>
+        `;
+        
+        if (result.success) {
+            resultHtml += `
+                    <div class="result-item">
+                        <span class="result-label">节点名称:</span>
+                        <span class="result-value">${nodeName}</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">节点类型:</span>
+                        <span class="result-value">${result.context_id || '未知'}</span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">节点位置:</span>
+                        <span class="result-value">${parentId ? '子节点' : '根节点'}</span>
+                    </div>
+            `;
+            
+            if (relatedContextCount > 0) {
+                resultHtml += `
+                    <div class="result-item">
+                        <span class="result-label">关联上下文:</span>
+                        <span class="result-value">${relatedContextCount} 个</span>
+                    </div>
+                `;
+            }
+            
+            if (result.message) {
+                resultHtml += `
+                    <div class="result-item">
+                        <span class="result-label">消息:</span>
+                        <span class="result-value">${result.message}</span>
+                    </div>
+                `;
+            }
+            
+            if (result.context_id) {
+                resultHtml += `
+                    <div class="result-item">
+                        <span class="result-label">节点ID:</span>
+                        <span class="result-value code">${result.context_id}</span>
+                    </div>
+                `;
+            }
+        } else {
+            resultHtml += `
+                    <div class="result-item">
+                        <span class="result-label">错误信息:</span>
+                        <span class="result-value error">${result.error || result.message || '未知错误'}</span>
+                    </div>
+            `;
+        }
+        
+        resultHtml += `
+                </div>
+                <div class="result-actions">
+                    <button class="btn btn-primary" onclick="novelGenerator.hideModal()">关闭</button>
+                </div>
+            </div>
+        `;
+        
+        this.showModal('<i class="fas fa-info-circle"></i> 节点创建结果', resultHtml);
+    }
+    
+    
+    // 过滤树节点
+    filterTreeNodes(searchTerm) {
+        const treeNodes = document.querySelectorAll('.tree-node-item');
+        const searchLower = searchTerm.toLowerCase().trim();
+        
+        if (!searchTerm) {
+            // 显示所有节点
+            treeNodes.forEach(node => {
+                node.style.display = 'block';
+            });
+            return;
+        }
+        
+        treeNodes.forEach(node => {
+            const label = node.querySelector('.tree-node-label');
+            if (label) {
+                const text = label.textContent || label.innerText;
+                if (text.toLowerCase().includes(searchLower)) {
+                    node.style.display = 'block';
+                    // 确保父节点展开
+                    this.expandParentNodes(node);
+                } else {
+                    node.style.display = 'none';
+                }
+            }
+        });
+    }
+    
+    // 展开父节点
+    expandParentNodes(nodeElement) {
+        let current = nodeElement;
+        while (current) {
+            const parentContainer = current.parentElement;
+            if (parentContainer && parentContainer.classList.contains('tree-node-children')) {
+                // 找到父节点的ID
+                const parentId = parentContainer.id.replace('children_', '');
+                const parentNode = document.querySelector(`[data-node-id="${parentId}"]`);
+                if (parentNode) {
+                    const toggleButton = parentNode.querySelector('.tree-node-toggle');
+                    const childrenContainer = document.getElementById(`children_${parentId}`);
+                    if (toggleButton && childrenContainer && childrenContainer.style.display === 'none') {
+                        childrenContainer.style.display = 'block';
+                        const icon = toggleButton.querySelector('i');
+                        if (icon) {
+                            icon.className = 'fas fa-chevron-down';
+                        }
+                    }
+                }
+            }
+            current = parentContainer ? parentContainer.parentElement : null;
+        }
+    }
+    
+    // 展开所有树节点
+    expandAllTreeNodes() {
+        const childrenContainers = document.querySelectorAll('.tree-node-children');
+        const toggleIcons = document.querySelectorAll('.tree-node-toggle i');
+        
+        childrenContainers.forEach(container => {
+            container.style.display = 'block';
+        });
+        
+        toggleIcons.forEach(icon => {
+            icon.className = 'fas fa-chevron-down';
+        });
+    }
+    
+    // 折叠所有树节点
+    collapseAllTreeNodes() {
+        const childrenContainers = document.querySelectorAll('.tree-node-children');
+        const toggleIcons = document.querySelectorAll('.tree-node-toggle i');
+        
+        childrenContainers.forEach(container => {
+            container.style.display = 'none';
+        });
+        
+        toggleIcons.forEach(icon => {
+            icon.className = 'fas fa-chevron-right';
+        });
+    }
+    
     // 从扁平列表构建以指定节点为根的子树
     buildSubtreeFromFlatList(rootNode, allNodes) {
         console.log("🌲 构建子树，根节点:", rootNode.id, rootNode.name);
@@ -2475,6 +3561,7 @@ class NovelGenerator {
             id: rootNode.id,
             name: rootNode.name || rootNode.title || '未命名',
             type: rootNode.type || '未知类型',
+            content: rootNode.content[0] || '未知内容',
             children: []
         };
         
@@ -2497,12 +3584,13 @@ class NovelGenerator {
     }
 
     convertToD3Node(node, allNodes) {
-        console.log("🔄 转换节点:", node.id, node.name, "节点ID类型:", typeof node.id, "parent_id:", node.parent_id, "parent_id类型:", typeof node.parent_id);
         
         const d3Node = {
             id: node.id,
             name: node.name || node.title || '未命名',
             type: node.type || '未知类型',
+            content: node.content[0].content || '未知内容',
+            created_at: node.created_at || '未知时间',
             children: []
         };
         
@@ -2516,36 +3604,27 @@ class NovelGenerator {
             if (parentId === null || parentId === undefined || parentId === '') {
                 return false;
             }
-            
             // 将parent_id和node.id都转换为字符串进行比较
             const parentIdStr = String(parentId);
             const nodeIdStr = String(nodeId);
-            
-            // 调试：打印比较过程
-            if (parentIdStr === nodeIdStr) {
-                console.log(`🔗 找到父子关系: 父节点 ${node.id} (${typeof node.id}) -> 子节点 ${n.id} (parent_id: ${n.parent_id}, ${typeof n.parent_id})`);
-            }
-            
             return parentIdStr === nodeIdStr;
         });
-        
-        console.log("👶 节点", node.id, "的子节点数量:", children.length, "所有节点数:", allNodes.length);
-        
         if (children.length > 0) {
             console.log("👶 子节点ID列表:", children.map(c => ({id: c.id, parent_id: c.parent_id})));
             d3Node.children = children.map(child => this.convertToD3Node(child, allNodes));
         }
-        
         return d3Node;
     }
 
     convertTreeToD3Node(node) {
         console.log("🌳 转换树节点:", node.id, node.name);
-        
+        console.log("🌳 节点数据:", node);
         const d3Node = {
             id: node.id,
             name: node.name || node.title || '未命名',
             type: node.type || '未知类型',
+            content: node.content[0].content || '未知内容',
+            created_at: node.created_at || '未知时间',
             children: []
         };
         
@@ -2588,52 +3667,48 @@ class NovelGenerator {
     }
 
     // 调试树状结构
-    debugTreeStructure(treeData) {
-        console.log("🔍 调试树状结构...");
-        
-        if (!treeData || !Array.isArray(treeData)) {
-            console.error("❌ 树状数据无效:", treeData);
-            return;
-        }
-        
-        console.log("📊 树状数据节点数:", treeData.length);
-        
-        // 检查每个节点
-        treeData.forEach((node, index) => {
-            console.log(`📋 节点 ${index}:`, {
-                id: node.id,
-                name: node.name || node.title,
-                parent_id: node.parent_id,
-                has_children: node.children !== undefined,
-                children_count: node.children ? node.children.length : 0,
-                children: node.children ? node.children.map(c => c.id) : []
-            });
+    // debugTreeStructure(treeData) {
+    //     if (!treeData || !Array.isArray(treeData)) {
+    //         console.error("❌ 树状数据无效:", treeData);
+    //         return;
+    //     }
+    //     console.log("📊 树状数据节点数:", treeData.length);
+    //     // 检查每个节点
+    //     treeData.forEach((node, index) => {
+    //         console.log(`📋 节点 ${index}:`, {
+    //             id: node.id,
+    //             name: node.name || node.title,
+    //             parent_id: node.parent_id,
+    //             has_children: node.children !== undefined,
+    //             children_count: node.children ? node.children.length : 0,
+    //             children: node.children ? node.children.map(c => c.id) : []
+    //         });
             
-            // 如果有子节点，递归检查
-            if (node.children && Array.isArray(node.children) && node.children.length > 0) {
-                console.log(`  👶 节点 ${node.id} 的子节点:`);
-                node.children.forEach((child, childIndex) => {
-                    console.log(`    ${childIndex}. ID: ${child.id}, Name: ${child.name}, Parent: ${child.parent_id}`);
-                });
-            }
-        });
+    //         // 如果有子节点，递归检查
+    //         if (node.children && Array.isArray(node.children) && node.children.length > 0) {
+    //             console.log(`  👶 节点 ${node.id} 的子节点:`);
+    //             node.children.forEach((child, childIndex) => {
+    //                 console.log(`    ${childIndex}. ID: ${child.id}, Name: ${child.name}, Parent: ${child.parent_id}`);
+    //             });
+    //         }
+    //     });
         
-        // 检查父子关系一致性
-        console.log("🔗 检查父子关系一致性...");
-        const allNodes = this.flattenTree(treeData);
-        console.log("📈 所有节点数（扁平化）:", allNodes.length);
+    //     // 检查父子关系一致性
+    //     console.log("🔗 检查父子关系一致性...");
+    //     const allNodes = this.flattenTree(treeData);
+    //     console.log("📈 所有节点数（扁平化）:", allNodes.length);
         
-        allNodes.forEach(node => {
-            if (node.parent_id) {
-                const parent = allNodes.find(n => n.id === node.parent_id);
-                if (!parent) {
-                    console.warn(`⚠️ 节点 ${node.id} 的父节点 ${node.parent_id} 不存在`);
-                } else {
-                    console.log(`✅ 节点 ${node.id} 的父节点 ${node.parent_id} 存在`);
-                }
-            }
-        });
-    }
+    //     allNodes.forEach(node => {
+    //         if (node.parent_id) {
+    //             const parent = allNodes.find(n => n.id === node.parent_id);
+    //             if (!parent) {
+    //                 console.warn(`⚠️ 节点 ${node.id} 的父节点 ${node.parent_id} 不存在`);
+    //             } else {
+    //                 console.log(`✅ 节点 ${node.id} 的父节点 ${node.parent_id} 存在`);
+    //             }
+    //         }
+    //     });
+    // }
 
     // 扁平化树状结构
     flattenTree(treeData, result = []) {
@@ -2671,7 +3746,7 @@ class NovelGenerator {
 
         // 防止重复点击导致的晃动 - 使用更严格的防抖动
         const now = Date.now();
-        if (this.lastClickedNode === nodeId && now - this.lastClickTime < 1000) {
+        if (this.lastClickedNode === nodeId && now - this.lastClickTime < 500) {
             console.log("⏱️ 防止快速重复点击（防抖动），上次点击时间:", this.lastClickTime, "时间差:", now - this.lastClickTime);
             return;
         }
@@ -2689,35 +3764,39 @@ class NovelGenerator {
             console.log("⏱️ 重置点击状态");
             this.lastClickedNode = null;
             this.lastClickTime = 0;
-        }, 1000);
+        }, 500);
 
         // 选择对应的上下文
         this.handleContextClick(nodeId);
 
-        // 高亮选中的节点（使用CSS类而不是直接修改属性，避免触发重绘）
+        // 高亮选中的节点
         this.highlightTreeNode(nodeId);
     }
 
-    // 修改highlightTreeNode方法，移除可能导致移位的动画
+    // 修改highlightTreeNode方法，添加节点高亮效果
     highlightTreeNode(nodeId) {
         if (!this.treeG) {
             console.warn("⚠️ 无法高亮节点：树状图未初始化");
             return;
         }
         
-        // 先恢复所有节点的原始样式
-        this.treeG.selectAll('.tree-node circle')
-            .attr('stroke', '#fff')
-            .attr('stroke-width', 3);
+        // 清除之前选中的节点高亮
+        this.treeG.selectAll('.tree-node circle.selected').classed('selected', false);
+        this.treeG.selectAll('.tree-node circle.highlighted').classed('highlighted', false);
         
-        // 为选中的节点设置高亮样式（只改变颜色和描边宽度）
-        const selectedNode = this.treeG.selectAll(`.tree-node[data-node-id="${nodeId}"] circle`);
-        selectedNode
-            .attr('stroke', 'var(--primary-color)')
-            .attr('stroke-width', 4);
+        // 高亮当前选中的节点
+        const selectedNode = this.treeG.selectAll('.tree-node').filter(d => d.data.id === nodeId);
+        if (!selectedNode.empty()) {
+            selectedNode.select('circle').classed('selected', true);
+            selectedNode.select('circle').classed('highlighted', true);
             
-        // 更新选中节点ID
-        this.selectedNodeId = nodeId;
+            // 更新选中节点ID
+            this.selectedNodeId = nodeId;
+            
+            console.log("✅ 节点高亮成功:", nodeId);
+        } else {
+            console.warn("⚠️ 未找到要选中的节点:", nodeId);
+        }
     }
 }
 
@@ -2726,9 +3805,7 @@ let novelGenerator;
 
 // 页面加载完成后初始化
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("📄 DOM加载完成，初始化NovelGenerator...");
     novelGenerator = new NovelGenerator();
-    
     // 确保全局可访问
     window.novelGenerator = novelGenerator;
 });
