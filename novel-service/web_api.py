@@ -529,40 +529,126 @@ async def get_context_path(context_id: str):
         raise HTTPException(status_code=500, detail=f"获取上下文路径失败: {str(e)}")
 
 class CreateContextRequest(BaseModel):
-    name: str
-    type: str
-    content: Any
+    # 支持多种数据结构格式
+    name: Optional[str] = None
+    type: Optional[str] = None
+    content: Optional[Any] = None
     parent_id: Optional[str] = None
-    metadata: Optional[Dict] = None
+    contextInfo: Optional[Dict] = None
+    context_info: Optional[List[Dict[str, Any]]] = None
 
 @app.post("/api/context/create")
 async def create_context(request: CreateContextRequest):
-    """创建新上下文（支持树状结构）"""
+    """创建新上下文（支持树状结构）并调用大模型生成初始内容"""
     try:
-        # 查找对应的ContextType
-        context_type = request.type
-        if hasattr(ContextType, 'NOVEL'):
-            # 使用真实的ContextType
-            for ct in ContextType:
-                if ct.value == request.type or ct.name.lower() == request.type.lower():
-                    context_type = ct
-                    break
+        name = request.name
+        context_type_str = request.type
+        content = request.content
+        parent_id = request.parent_id
+        context_info = request.context_info or request.contextInfo
         
+        # 将字符串类型的context_type转换为ContextType枚举
+        context_type = None
+        if context_type_str:
+            # 尝试从ContextType枚举中查找匹配的类型
+            if hasattr(ContextType, context_type_str.upper()):
+                context_type = getattr(ContextType, context_type_str.upper())
+            else:
+                # 尝试通过值匹配
+                for ct in ContextType:
+                    if ct.value == context_type_str or ct.name.lower() == context_type_str.lower():
+                        context_type = ct
+                        break
+        
+        # 如果没有找到匹配的类型，使用默认类型
+        if not context_type:
+            context_type = ContextType.CUSTOM
+        
+        # 创建上下文
         context_id = advanced_context_manager.create_context(
-            name=request.name,
+            name=name,
             context_type=context_type,
-            content=request.content,
-            parent_id=request.parent_id,
-            metadata=request.metadata
+            content=content or "",
+            parent_id=parent_id,
+            metadata={"context_info": context_info}
         )
         
-        return {
+        # 将name, context_type, content, parent_id, contextInfo组装成LangChain服务能够接收的格式
+        # 构建系统提示
+        system_prompt = get_system_prompt()
+        
+        # 构建用户消息：基于上下文信息生成初始内容
+        user_message = f"""
+            名称：{name}
+            类型：{context_type}
+            父节点ID：{parent_id if parent_id else '无'}
+            上下文信息：{context_info if context_info else '无'}
+            {content if content else '（无初始内容）'}
+        """
+        
+        # 调用大模型生成内容
+        generated_content = ""
+        if LLM_AVAILABLE and llm:
+            try:
+                if hasattr(llm, 'ainvoke'):
+                    # 构建消息
+                    messages = []
+                    if isinstance(system_prompt, str):
+                        messages.append(SystemMessage(content=system_prompt))
+                    else:
+                        messages.append(system_prompt)
+                    
+                    messages.append(HumanMessage(content=user_message))
+                    # 调用LLM
+                    response = await llm.ainvoke(messages)
+                    if hasattr(response, 'content'):
+                        generated_content = response.content
+                    else:
+                        generated_content = str(response)
+                    
+                    # 清理内容
+                    generated_content = (
+                        str(generated_content)
+                        .replace('\u200b', '')
+                        .replace('\uff0c', ',')
+                        .replace('\xa0', ' ')
+                        .replace('\u3000', ' ')
+                    )
+                    
+                    # 将生成的内容保存到上下文中
+                    if generated_content:
+                        advanced_context_manager.save_to_context(
+                            context_id,
+                            generated_content,
+                            append=True
+                        )
+                else:
+                    generated_content = "LLM不可用或配置错误。"
+            except Exception as e:
+                print(f"调用大模型失败: {str(e)}")
+                generated_content = f"调用大模型失败: {str(e)}"
+        else:
+            generated_content = "LLM服务不可用，使用默认内容。"
+        
+        # 构建响应，包含更多信息
+        response_data = {
             "success": True,
             "context_id": context_id,
-            "message": f"上下文 '{request.name}' 创建成功"
+            "name": name,
+            "type": context_type.value if hasattr(context_type, 'value') else str(context_type),
+            "content": content,
+            "generated_content": generated_content,
+            "parent_id": parent_id,
+            "message": f"上下文 '{name}' 创建成功，并已调用大模型生成初始内容"
         }
+        return response_data
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"创建上下文失败: {str(e)}")
+        error_msg = f"创建上下文失败: {str(e)}"
+        print(f"❌ {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 class UpdateContextRequest(BaseModel):
     name: Optional[str] = None

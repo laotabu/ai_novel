@@ -458,6 +458,7 @@ class AdvancedContextManager:
             "id": node.id,
             "name": node.name,
             "type": node.type.value,
+            "content": node.content,
             "project_id": node.project_id,
             "parent_id": node.parent_id,
             "has_children": len(node.children) > 0,
