@@ -17,24 +17,9 @@
                     <i class="fas fa-book"></i>
                     <h1>AI小说生成器</h1>
                 </div>
-                <div class="server-status" id="serverStatus">
-                    <div class="status-indicator status-stopped" id="statusIndicator"></div>
-                    <span class="status-text" id="statusText">服务器未连接</span>
-                </div>
             </div>
             <div class="header-right">
-                <button class="btn btn-sm btn-success" id="startServerBtn">
-                    <i class="fas fa-play"></i> 启动服务器
-                </button>
-                <button class="btn btn-sm btn-danger" id="stopServerBtn" disabled>
-                    <i class="fas fa-stop"></i> 停止服务器
-                </button>
-                <button class="btn btn-sm btn-primary" id="refreshBtn">
-                    <i class="fas fa-sync-alt"></i> 刷新
-                </button>
-                <button class="btn btn-sm btn-info" onclick="novelGenerator.showHelp()">
-                    <i class="fas fa-question-circle"></i> 帮助
-                </button>
+                <!-- 服务器控制按钮已移除 -->
             </div>
         </header>
 
@@ -157,65 +142,7 @@
                 </div>
             </section>
 
-            <!-- 右侧：聊天和生成 -->
-            <section class="panel panel-right">
-                <div class="panel-header">
-                    <h2><i class="fas fa-robot"></i> AI小说创作</h2>
-                    <div class="panel-actions">
-                        <button class="btn btn-sm btn-warning" onclick="novelGenerator.clearChat()">
-                            <i class="fas fa-trash"></i> 清除记录
-                        </button>
-                        <button class="btn btn-sm btn-success" id="generateBtn">
-                            <i class="fas fa-magic"></i> 生成小说
-                        </button>
-                    </div>
-                </div>
-                <div class="panel-content">
-                    <div class="generation-params">
-                        <h3><i class="fas fa-sliders-h"></i> 生成参数</h3>
-                        <div class="param-group">
-                            <label>创意度: <span id="creativityValue">70</span>%</label>
-                            <input type="range" id="creativitySlider" min="0" max="100" value="70" class="param-slider">
-                        </div>
-                        <div class="param-group">
-                            <label>长度: <span id="lengthValue">500</span>字</label>
-                            <input type="range" id="lengthSlider" min="100" max="2000" value="500" step="100" class="param-slider">
-                        </div>
-                        <div class="param-group">
-                            <label>风格强度: <span id="styleValue">80</span>%</label>
-                            <input type="range" id="styleSlider" min="0" max="100" value="80" class="param-slider">
-                        </div>
-                    </div>
-                    
-                    <div class="chat-section">
-                        <div class="chat-header">
-                            <h3><i class="fas fa-comments"></i> 创作对话</h3>
-                            <div class="chat-stats">
-                                <span id="messageCount">0</span> 条消息
-                            </div>
-                        </div>
-                        
-                        <div class="chat-messages" id="chatMessages">
-                            <!-- 聊天消息将通过JavaScript动态生成 -->
-                            <div class="loading">
-                                <i class="fas fa-spinner fa-spin"></i> 正在初始化...
-                            </div>
-                        </div>
-                        
-                        <div class="chat-input-area">
-                            <textarea 
-                                class="chat-input" 
-                                id="chatInput" 
-                                placeholder="输入创作指令... (Shift+Enter换行，Enter发送)"
-                                rows="3"
-                            ></textarea>
-                            <button class="send-btn" id="sendMessageBtn">
-                                <i class="fas fa-paper-plane"></i> 发送
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </section>
+            <!-- 右侧：聊天和生成（已移除） -->
         </main>
 
         <!-- 底部状态栏 -->

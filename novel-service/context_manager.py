@@ -328,6 +328,7 @@ class AdvancedContextManager:
         self._save_context(self.contexts[context_id])
     
     def delete_context(self, context_id: str) -> bool:
+        print(f"[ℹ️] 删除上下文: {context_id}")
         """删除上下文"""
         if context_id not in self.contexts:
             return False

@@ -1,0 +1,22 @@
+{
+  "id": "02a44a15",
+  "name": "新节点",
+  "type": "小说数据",
+  "content": [
+    {
+      "id": "item_1",
+      "content": "",
+      "created_at": "2026-02-13T14:41:00.673288",
+      "updated_at": "2026-02-13T14:41:00.673288"
+    }
+  ],
+  "project_id": "default",
+  "metadata": {
+    "context_info": null
+  },
+  "parent_id": null,
+  "children": [],
+  "created_at": "2026-02-13T14:41:00.673288",
+  "updated_at": "2026-02-13T14:41:00.673288",
+  "selected_items": []
+}

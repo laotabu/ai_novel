@@ -1,13 +1,3 @@
-// 防抖函数（避免高频事件抖动）
-function debounce(func, wait = 50) {
-    let timeout;
-    return function executed(...args) {
-        clearTimeout(timeout);
-        timeout = setTimeout(() => func.apply(this, args), wait);
-    };
-}
-
-
 /**
  * AI小说生成器 - 渲染进程主逻辑
  */
@@ -18,7 +8,6 @@ class NovelGenerator {
         this.contexts = [];
         this.contextTree = [];
         this.messages = [];
-        this.isServerRunning = false;
         
         // 树状图相关属性
         this.treeData = null;
@@ -27,20 +16,20 @@ class NovelGenerator {
         this.contextMenu = null;
         this.contextMenuTarget = null;
         
-    // D3树状图相关
-    this.treeSvg = null;
-    this.treeG = null;
-    this.treeZoom = null;
-    this.treeWidth = 1200;  // 增加宽度以容纳更多节点
-    this.treeHeight = 800;  // 增加高度以容纳更多节点
-    this.treeMargin = { top: 40, right: 120, bottom: 40, left: 120 };  // 增加边距
-    this.nodeSpacing = 80;  // 节点间距
-    this.nodeRadius = 12;   // 节点半径
+        // D3树状图相关
+        this.treeSvg = null;
+        this.treeG = null;
+        this.treeZoom = null;
+        this.treeWidth = 1200;  // 增加宽度以容纳更多节点
+        this.treeHeight = 800;  // 增加高度以容纳更多节点
+        this.treeMargin = { top: 40, right: 120, bottom: 40, left: 120 };  // 增加边距
+        this.nodeSpacing = 80;  // 节点间距
+        this.nodeRadius = 12;   // 节点半径
     
-    // 提示框相关
-    this.tooltip = null;
-    this.tooltipTimeout = null;
-    this.currentTooltipNodeId = null;
+        // 提示框相关
+        this.tooltip = null;
+        this.tooltipTimeout = null;
+        this.currentTooltipNodeId = null;
         
         // 左侧树状列表相关属性
         this.expandedNodes = new Set(); // 存储展开的节点ID
@@ -71,42 +60,14 @@ class NovelGenerator {
         // 初始化树状图可视化（只调用一次）
         this.initTreeVisualization();
         
-        // 检查服务器状态
-        await this.checkServerStatus();
-        
-        // 如果服务器运行中，加载上下文
-        if (this.isServerRunning) {
-            await this.loadContexts();
-            this.updateWelcomeMessage();
-        }
-        
+        // 加载上下文
+        await this.loadContexts();
+    
         // 更新UI状态
         this.updateUIState();
     }
     
     bindEvents() {
-        // 服务器控制按钮
-        document.getElementById('startServerBtn')?.addEventListener('click', () => this.startServer());
-        document.getElementById('stopServerBtn')?.addEventListener('click', () => this.stopServer());
-        document.getElementById('refreshBtn')?.addEventListener('click', () => this.refreshContexts());
-        
-        // 生成按钮
-        document.getElementById('generateBtn')?.addEventListener('click', () => this.generateNovelContent());
-        
-        // 发送消息按钮
-        document.getElementById('sendMessageBtn')?.addEventListener('click', () => this.sendMessage());
-        
-        // 聊天输入框回车发送
-        const chatInput = document.getElementById('chatInput');
-        if (chatInput) {
-            chatInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    this.sendMessage();
-                }
-            });
-        }
-        
         // 搜索框
         const searchInput = document.getElementById('searchInput');
         if (searchInput) {
@@ -278,7 +239,6 @@ removeFromSelection(contextId) {
         this.selectedContexts.delete(contextId);
         this.updateNodeSelectionStyle(contextId);
         this.updateSelectionCount();
-        this.updateGenerateButtonState();
         
         // 重新渲染已选中上下文列表
         this.renderSelectedContexts();
@@ -318,64 +278,7 @@ bindContextMenuEvents() {
         contextMenu.addEventListener('click', this.handleContextMenuClick);
     }
     
-    async checkServerStatus() {
-        const statusIndicator = document.getElementById('statusIndicator');
-        const statusText = document.getElementById('statusText');
-        
-        if (!statusIndicator || !statusText) {
-            console.error("状态元素未找到");
-            return;
-        }
-        
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
-            
-            const response = await fetch(`${this.serverUrl}/api/health`, {
-                signal: controller.signal,
-                headers: {
-                    'Accept': 'application/json',
-                    'Cache-Control': 'no-cache'
-                }
-            });
-            
-            clearTimeout(timeoutId);
-            
-            if (response.ok) {
-                const data = await response.json();
-                
-                this.isServerRunning = true;
-                
-                statusIndicator.className = 'status-indicator status-started';
-                statusText.textContent = `服务器运行中 (${data.version || '1.0.0'})`;
-                
-                // 更新按钮状态
-                this.updateServerButtons(true);
-                
-                return true;
-            } else {
-                throw new Error(`HTTP ${response.status}`);
-            }
-        } catch (error) {
-            this.isServerRunning = false;
-            
-            statusIndicator.className = 'status-indicator status-stopped';
-            statusText.textContent = '服务器未连接';
-            
-            // 更新按钮状态
-            this.updateServerButtons(false);
-            
-            return false;
-        }
-    }
-    
-    updateServerButtons(isRunning) {
-        const startBtn = document.getElementById('startServerBtn');
-        const stopBtn = document.getElementById('stopServerBtn');
-        
-        if (startBtn) startBtn.disabled = isRunning;
-        if (stopBtn) stopBtn.disabled = !isRunning;
-    }
+
     
     async loadContexts() {
         const contextList = document.getElementById('contextList');
@@ -396,6 +299,7 @@ bindContextMenuEvents() {
             const treeResponse = await fetch(`${this.serverUrl}/api/contexts/tree`);
             if (treeResponse.ok) {
                 const treeData = await treeResponse.json();
+                console.log("📂 上下文树状结构数据:", treeData);
                 if (treeData.success && treeData.tree && Array.isArray(treeData.tree)) {
                     this.contextTree = treeData.tree;
                     // 检查树状结构中的父子关系
@@ -424,7 +328,6 @@ bindContextMenuEvents() {
             console.log("📂 上下文列表:", this.contexts);
             // 使用普通列表构建树状结构
             this.contextTree = this.contexts;
-            
             // 渲染树状图
             this.renderTreeVisualization();
             
@@ -622,7 +525,6 @@ bindContextMenuEvents() {
         
         // 更新UI
         this.updateSelectionCount();
-        this.updateGenerateButtonState();
         
         // 如果当前显示的是已选中上下文选项卡，更新列表
         const selectedTabBtn = document.querySelector('.tab-btn[data-tab="selected"]');
@@ -733,7 +635,6 @@ bindContextMenuEvents() {
         
         // 更新UI状态
         this.updateSelectionCount();
-        this.updateGenerateButtonState();
     }
     
 clearSelection() {
@@ -752,7 +653,6 @@ clearSelection() {
     
     // 更新UI状态
     this.updateSelectionCount();
-    this.updateGenerateButtonState();
     
     // 如果当前显示的是已选中上下文选项卡，更新列表
     const selectedTabBtn = document.querySelector('.tab-btn[data-tab="selected-contexts"]');
@@ -1021,113 +921,14 @@ clearSelection() {
         }
     }
     
-    updateGenerateButtonState() {
-        const generateBtn = document.getElementById('generateBtn');
-        if (generateBtn) {
-            generateBtn.disabled = this.selectedContexts.size === 0;
-        }
-    }
-    
-    updateWelcomeMessage() {
-        const chatMessages = document.getElementById('chatMessages');
-        if (!chatMessages) return;
-        
-        if (this.messages.length === 0) {
-            const welcomeMessage = `
-                <div class="message message-ai">
-                    <div class="message-header">
-                        <span class="message-sender">AI助手</span>
-                        <span class="message-time">${new Date().toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit'})}</span>
-                    </div>
-                    <div class="message-content">
-                        <strong>🎉 欢迎使用AI小说生成器！</strong><br><br>
-                        💡 <strong>使用指南：</strong><br>
-                        1. 从左侧选择上下文（支持多选）<br>
-                        2. 在右侧输入创作指令<br>
-                        3. 调整生成参数（创意度、长度等）<br>
-                        4. 点击"生成小说"或按Ctrl+G<br><br>
-                        🚀 <strong>当前状态：</strong><br>
-                        • 服务器: ${this.isServerRunning ? '✅ 已连接' : '❌ 未连接'}<br>
-                        • 上下文: ${this.contexts.length} 个可用<br>
-                        • 已选择: ${this.selectedContexts.size} 个上下文
-                    </div>
-                </div>
-            `;
-            
-            chatMessages.innerHTML = welcomeMessage;
-            this.messages.push({
-                type: 'ai',
-                content: welcomeMessage,
-                timestamp: new Date()
-            });
-            
-            this.updateMessageCount();
-        }
-    }
-    
-    updateMessageCount() {
-        const messageCountElement = document.getElementById('messageCount');
-        if (messageCountElement) {
-            messageCountElement.textContent = this.messages.length;
-        }
-    }
+
     
     updateUIState() {
-        // 更新生成按钮状态
-        this.updateGenerateButtonState();
-        
         // 更新选择计数
         this.updateSelectionCount();
-        
-        // 更新消息计数
-        this.updateMessageCount();
     }
     
-    async sendMessage() {
-        const chatInput = document.getElementById('chatInput');
-        if (!chatInput || !chatInput.value.trim()) {
-            return;
-        }
-        
-        const message = chatInput.value.trim();
-        console.log("💬 发送消息:", message);
-        
-        // 添加用户消息
-        this.addMessage('user', message);
-        
-        // 清空输入框
-        chatInput.value = '';
-        
-        // 显示AI思考状态
-        this.addMessage('ai', '<i class="fas fa-spinner fa-spin"></i> 思考中...', true);
-        
-        try {
-            const response = await fetch(`${this.serverUrl}/api/chat`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    message: message,
-                    context_ids: Array.from(this.selectedContexts)
-                })
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            
-            const result = await response.json();
-            console.log("🤖 AI回复:", result);
-            
-            // 更新AI消息
-            this.updateLastMessage(result.response || result.message || '收到消息');
-            
-        } catch (error) {
-            console.error("❌ 发送消息失败:", error);
-            this.updateLastMessage(`发送失败: ${error.message}`);
-        }
-    }
+    // sendMessage方法已移除，因为聊天面板已删除
     
     addMessage(type, content, isTemporary = false) {
         const chatMessages = document.getElementById('chatMessages');
@@ -1315,188 +1116,6 @@ clearSelection() {
     }
     
     
-    async startServer() {
-        console.log("🚀 启动服务器...");
-        
-        const statusIndicator = document.getElementById('statusIndicator');
-        const statusText = document.getElementById('statusText');
-        
-        if (!statusIndicator || !statusText) {
-            console.error("❌ 状态元素未找到");
-            return;
-        }
-        
-        // 更新状态为启动中
-        statusIndicator.className = 'status-indicator status-starting';
-        statusText.textContent = '服务器启动中...';
-        
-        try {
-            const response = await fetch(`${this.serverUrl}/api/start`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                }
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            
-            const result = await response.json();
-            console.log("✅ 服务器启动成功:", result);
-            
-            // 等待服务器完全启动
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            
-            // 重新检查服务器状态
-            await this.checkServerStatus();
-            
-            // 如果服务器运行中，加载上下文
-            if (this.isServerRunning) {
-                await this.loadContexts();
-                this.updateWelcomeMessage();
-            }
-            
-        } catch (error) {
-            console.error("❌ 启动服务器失败:", error);
-            
-            statusIndicator.className = 'status-indicator status-stopped';
-            statusText.textContent = '启动失败';
-            
-            this.showModal('<i class="fas fa-exclamation-triangle"></i> 服务器启动失败', `
-                <div class="error-message">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <h3>无法启动服务器</h3>
-                    <p>错误信息: ${error.message}</p>
-                    <p>请检查:</p>
-                    <ul>
-                        <li>Python环境是否正确安装</li>
-                        <li>依赖包是否已安装 (pip install -r requirements.txt)</li>
-                        <li>端口5000是否被占用</li>
-                    </ul>
-                </div>
-            `);
-        }
-    }
-    
-    async stopServer() {
-        console.log("🛑 停止服务器...");
-        
-        const statusIndicator = document.getElementById('statusIndicator');
-        const statusText = document.getElementById('statusText');
-        
-        if (!statusIndicator || !statusText) {
-            console.error("❌ 状态元素未找到");
-            return;
-        }
-        
-        // 更新状态为停止中
-        statusIndicator.className = 'status-indicator status-stopping';
-        statusText.textContent = '服务器停止中...';
-        
-        try {
-            const response = await fetch(`${this.serverUrl}/api/stop`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                }
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            
-            const result = await response.json();
-            console.log("✅ 服务器停止成功:", result);
-            
-            // 更新状态
-            this.isServerRunning = false;
-            statusIndicator.className = 'status-indicator status-stopped';
-            statusText.textContent = '服务器已停止';
-            
-            // 更新按钮状态
-            this.updateServerButtons(false);
-            
-            // 清空上下文列表
-            const contextList = document.getElementById('contextList');
-            if (contextList) {
-                contextList.innerHTML = `
-                    <div class="empty-state">
-                        <i class="fas fa-server"></i>
-                        <p>服务器已停止，无法加载上下文</p>
-                    </div>
-                `;
-            }
-            
-            // 清空上下文详情
-            const contextDetails = document.getElementById('contextDetails');
-            const contextItems = document.getElementById('contextItems');
-            if (contextDetails) contextDetails.innerHTML = '';
-            if (contextItems) contextItems.innerHTML = '';
-            
-            // 清空选择
-            this.selectedContexts.clear();
-            this.updateSelectionCount();
-            this.updateGenerateButtonState();
-            
-        } catch (error) {
-            console.error("❌ 停止服务器失败:", error);
-            
-            statusIndicator.className = 'status-indicator status-stopped';
-            statusText.textContent = '停止失败';
-            
-            this.showModal('服务器停止失败', `
-                <div class="error-message">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <h3>无法停止服务器</h3>
-                    <p>错误信息: ${error.message}</p>
-                    <p>服务器可能已经停止运行。</p>
-                </div>
-            `);
-        }
-    }
-    
-    async refreshContexts() {
-        console.log("🔄 刷新上下文...");
-        
-        if (!this.isServerRunning) {
-            console.warn("⚠️ 服务器未运行，无法刷新上下文");
-            this.showModal('<i class="fas fa-exclamation-circle"></i> 服务器未运行', `
-                <div class="warning-message">
-                    <i class="fas fa-exclamation-circle"></i>
-                    <h3>服务器未连接</h3>
-                    <p>请先启动服务器再刷新上下文。</p>
-                </div>
-            `);
-            return;
-        }
-        
-        // 显示加载状态
-        const contextList = document.getElementById('contextList');
-        if (contextList) {
-            contextList.innerHTML = `
-                <div class="loading">
-                    <i class="fas fa-spinner fa-spin"></i> 正在刷新上下文...
-                </div>
-            `;
-        }
-        
-        // 清空上下文详情
-        const contextDetails = document.getElementById('contextDetails');
-        const contextItems = document.getElementById('contextItems');
-        if (contextDetails) contextDetails.innerHTML = '';
-        if (contextItems) contextItems.innerHTML = '';
-        
-        // 清空选择
-        this.selectedContexts.clear();
-        this.updateSelectionCount();
-        this.updateGenerateButtonState();
-        
-        // 重新加载上下文
-        await this.loadContexts();
-        
-        console.log("✅ 上下文刷新完成");
-    }
     
     // 添加树状图控制方法 - 移除所有动画效果
     zoomIn() {
@@ -1678,6 +1297,7 @@ clearSelection() {
                 dateElement.textContent = this.formatDate(nodeData.created_at || nodeData.updated_at) || '未知';
             }
             if (contentElement) {
+                console.log("📝 内容预览:", nodeData.content);
                 let contentPreview = '无内容';
                 if (nodeData.content) {
                     if (Array.isArray(nodeData.content)) {
@@ -1971,6 +1591,25 @@ clearSelection() {
         this.initRelatedContextsSelect();
     }
 
+    // 显示加载动画
+    showLoading(text = '处理中...') {
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const loadingText = document.getElementById('loadingText');
+        
+        if (loadingOverlay && loadingText) {
+            loadingText.textContent = text;
+            loadingOverlay.style.display = 'flex';
+        }
+    }
+    
+    // 隐藏加载动画
+    hideLoading() {
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        if (loadingOverlay) {
+            loadingOverlay.style.display = 'none';
+        }
+    }
+
     async submitAddNode() {
         console.log("📤 提交添加节点");
         console.log("📤 modalParentId:", this.modalParentId, "类型:", typeof this.modalParentId);
@@ -1985,6 +1624,9 @@ clearSelection() {
         console.log("📋 选中的联系上下文ID:", relatedContextIds);
         
         console.log("节点信息:", { nodeName, nodeType, nodeContent, relatedContextIds });
+        
+        // 显示加载动画
+        this.showLoading('正在添加节点，请稍候...');
         
         try {
             // 处理parentId - 优先使用modalParentId，因为它是在showAddNodeModal中存储的
@@ -2115,6 +1757,9 @@ clearSelection() {
                     </ul>
                 </div>
             `);
+        } finally {
+            // 无论成功还是失败，都隐藏加载动画
+            this.hideLoading();
         }
     }
             
@@ -2250,6 +1895,9 @@ clearSelection() {
             return;
         }
         
+        // 显示加载动画
+        this.showLoading('正在加载节点详情...');
+        
         try {
             console.log(`🌐 尝试获取节点详情: ${this.serverUrl}/api/context/${nodeId}`);
             
@@ -2294,6 +1942,9 @@ clearSelection() {
                     </ul>
                 </div>
             `);
+        } finally {
+            // 隐藏加载动画
+            this.hideLoading();
         }
     }
 
@@ -2318,11 +1969,13 @@ clearSelection() {
         // 显示确认对话框
         this.showModal('<i class="fas fa-exclamation-triangle"></i> 确认删除', `
             <div class="confirm-message">
-                <i class="fas fa-exclamation-triangle"></i>
-                <h3>确认删除节点</h3>
-                <p>您确定要删除这个节点吗？此操作不可撤销。</p>
-                <p class="text-muted">如果节点有子节点，子节点也会被删除。</p>
-                <div class="confirm-actions">
+                <p class="mb-4" style="font-size: 1.05rem; line-height: 1.6; color: #495057;">
+                    您确定要删除这个节点吗？此操作不可撤销。<br>
+                    <span class="text-danger fw-medium">
+                    <i class="fas fa-sitemap me-1"></i>如果节点包含子节点，所有子节点将被级联删除
+                    </span>
+                </p>
+                <div class="confirm-actions" style="display: flex; gap: 12px; justify-content: flex-end; flex-wrap: nowrap; margin-top: 1.25rem;">
                     <button class="btn btn-secondary" onclick="novelGenerator.hideModal()">取消</button>
                     <button class="btn btn-danger" onclick="novelGenerator.confirmDeleteNode('${savedNodeId}')">确认删除</button>
                 </div>
@@ -2503,8 +2156,6 @@ clearSelection() {
             
             this.showModal('删除成功', `
                 <div class="success-message">
-                    <i class="fas fa-check-circle"></i>
-                    <h3>节点删除成功</h3>
                     <p>${message}</p>
                 </div>
             `);
@@ -2513,8 +2164,6 @@ clearSelection() {
             console.error("❌ 删除节点失败:", error);
             this.showModal('<i class="fas fa-exclamation-triangle"></i> 删除失败', `
                 <div class="error-message">
-                    <i class="fas fa-exclamation-triangle"></i>
-                    <h3>删除节点失败</h3>
                     <p>错误信息: ${error.message}</p>
                     <p>请检查网络连接或服务器状态。</p>
                 </div>
@@ -2522,6 +2171,38 @@ clearSelection() {
         }
     }
     
+    async refreshContexts() {
+        console.log("🔄 刷新上下文...");
+        
+        
+        // 显示加载状态
+        const contextList = document.getElementById('contextList');
+        if (contextList) {
+            contextList.innerHTML = `
+                <div class="loading">
+                    <i class="fas fa-spinner fa-spin"></i> 正在刷新上下文...
+                </div>
+            `;
+        }
+        
+        // 清空上下文详情
+        const contextDetails = document.getElementById('contextDetails');
+        const contextItems = document.getElementById('contextItems');
+        if (contextDetails) contextDetails.innerHTML = '';
+        if (contextItems) contextItems.innerHTML = '';
+        
+        // 清空选择
+        this.selectedContexts.clear();
+        this.updateSelectionCount();
+    
+        // 重新加载上下文
+        await this.loadContexts();
+    
+        console.log("✅ 上下文刷新完成");
+    }
+
+
+
     // 获取节点的子节点数量
     async getChildNodeCount(nodeId) {
         try {
@@ -2889,6 +2570,7 @@ clearSelection() {
             console.warn("⚠️ 树状数据为空");
             return null;
         }
+        console.log("🌳 :", treeData);
         // 检查数据是否已经是树状结构（包含children字段）
         const firstNode = treeData[0];
         if (firstNode && firstNode.children !== undefined) {
@@ -3396,10 +3078,6 @@ clearSelection() {
     showNodeCreationResult(result, nodeName, parentId, relatedContextCount) {
         let resultHtml = `
             <div class="node-creation-result">
-                <div class="result-header">
-                    <i class="fas fa-check-circle"></i>
-                    <h3>节点创建结果</h3>
-                </div>
                 <div class="result-details">
                     <div class="result-item">
                         <span class="result-label">操作状态:</span>
@@ -3434,11 +3112,11 @@ clearSelection() {
                 `;
             }
             
-            if (result.message) {
+            if (result.generated_content) {
                 resultHtml += `
                     <div class="result-item">
-                        <span class="result-label">消息:</span>
-                        <span class="result-value">${result.message}</span>
+                        <span class="result-label">内容:</span>
+                        <span class="result-value">${result.generated_content}</span>
                     </div>
                 `;
             }
@@ -3459,14 +3137,6 @@ clearSelection() {
                     </div>
             `;
         }
-        
-        resultHtml += `
-                </div>
-                <div class="result-actions">
-                    <button class="btn btn-primary" onclick="novelGenerator.hideModal()">关闭</button>
-                </div>
-            </div>
-        `;
         
         this.showModal('<i class="fas fa-info-circle"></i> 节点创建结果', resultHtml);
     }
@@ -3561,7 +3231,7 @@ clearSelection() {
             id: rootNode.id,
             name: rootNode.name || rootNode.title || '未命名',
             type: rootNode.type || '未知类型',
-            content: rootNode.content[0] || '未知内容',
+            content: (node.content != undefined && node.content.length > 0) ? node.content[0].content : '未知内容',
             children: []
         };
         
@@ -3589,7 +3259,7 @@ clearSelection() {
             id: node.id,
             name: node.name || node.title || '未命名',
             type: node.type || '未知类型',
-            content: node.content[0].content || '未知内容',
+            content: (node.content != undefined && node.content.length > 0) ? node.content[0].content : '未知内容',
             created_at: node.created_at || '未知时间',
             children: []
         };
@@ -3623,7 +3293,7 @@ clearSelection() {
             id: node.id,
             name: node.name || node.title || '未命名',
             type: node.type || '未知类型',
-            content: node.content[0].content || '未知内容',
+            content: (node.content != undefined && node.content.length > 0) ? node.content[0].content : '未知内容',
             created_at: node.created_at || '未知时间',
             children: []
         };
@@ -3666,49 +3336,6 @@ clearSelection() {
         return d3Node;
     }
 
-    // 调试树状结构
-    // debugTreeStructure(treeData) {
-    //     if (!treeData || !Array.isArray(treeData)) {
-    //         console.error("❌ 树状数据无效:", treeData);
-    //         return;
-    //     }
-    //     console.log("📊 树状数据节点数:", treeData.length);
-    //     // 检查每个节点
-    //     treeData.forEach((node, index) => {
-    //         console.log(`📋 节点 ${index}:`, {
-    //             id: node.id,
-    //             name: node.name || node.title,
-    //             parent_id: node.parent_id,
-    //             has_children: node.children !== undefined,
-    //             children_count: node.children ? node.children.length : 0,
-    //             children: node.children ? node.children.map(c => c.id) : []
-    //         });
-            
-    //         // 如果有子节点，递归检查
-    //         if (node.children && Array.isArray(node.children) && node.children.length > 0) {
-    //             console.log(`  👶 节点 ${node.id} 的子节点:`);
-    //             node.children.forEach((child, childIndex) => {
-    //                 console.log(`    ${childIndex}. ID: ${child.id}, Name: ${child.name}, Parent: ${child.parent_id}`);
-    //             });
-    //         }
-    //     });
-        
-    //     // 检查父子关系一致性
-    //     console.log("🔗 检查父子关系一致性...");
-    //     const allNodes = this.flattenTree(treeData);
-    //     console.log("📈 所有节点数（扁平化）:", allNodes.length);
-        
-    //     allNodes.forEach(node => {
-    //         if (node.parent_id) {
-    //             const parent = allNodes.find(n => n.id === node.parent_id);
-    //             if (!parent) {
-    //                 console.warn(`⚠️ 节点 ${node.id} 的父节点 ${node.parent_id} 不存在`);
-    //             } else {
-    //                 console.log(`✅ 节点 ${node.id} 的父节点 ${node.parent_id} 存在`);
-    //             }
-    //         }
-    //     });
-    // }
 
     // 扁平化树状结构
     flattenTree(treeData, result = []) {
@@ -3799,6 +3426,9 @@ clearSelection() {
         }
     }
 }
+
+
+
 
 // 全局实例
 let novelGenerator;
