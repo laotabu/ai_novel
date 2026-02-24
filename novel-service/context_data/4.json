@@ -1,0 +1,17 @@
+{
+  "id": "4",
+  "name": "事件细纲",
+  "type": "事件细纲",
+  "content": [],
+  "project_id": "default",
+  "metadata": {
+    "context_info": null
+  },
+  "parent_id": null,
+  "children": [
+    "f85f594d"
+  ],
+  "created_at": "2026-02-13T09:43:51.135700",
+  "updated_at": "2026-02-23T20:07:47.803590",
+  "selected_items": []
+}

@@ -1,0 +1,18 @@
+{
+  "id": "1",
+  "name": "作品大纲",
+  "type": "作品大纲",
+  "content": [],
+  "project_id": "default",
+  "metadata": {
+    "context_info": null
+  },
+  "parent_id": null,
+  "children": [
+    "abe9b59f",
+    "cea3c1d0"
+  ],
+  "created_at": "2026-02-13T09:43:51.135700",
+  "updated_at": "2026-02-23T20:07:47.803590",
+  "selected_items": []
+}

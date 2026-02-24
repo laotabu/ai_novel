@@ -16,6 +16,15 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from prompt import prompt as system_prompt
 from deepseek_llm import llm
 from context_manager import advanced_context_manager, ContextType
+# 导入fanqie_tool模块
+try:
+    from fanqie_tool import novel_tool, FanqieNovelParser
+    print("✅ 成功导入fanqie_tool模块")
+except ImportError as e:
+    print(f"⚠️ 导入fanqie_tool模块失败: {e}")
+    novel_tool = None
+    FanqieNovelParser = None
+
 # 尝试导入现有的后端模块，提供回退方案
 try:
     from config import config
@@ -56,17 +65,112 @@ except ImportError as e:
             self.content = content
 
 
-# 数据模型
-class GenerateNovelRequest(BaseModel):
-    prompt: str
-    context_ids: List[str] = Field(default_factory=list)
-    params: Dict[str, Any] = Field(default_factory=lambda: {
-        "creativity": 70,
-        "length": 500,
-        "style": 80,
-        "temperature": 0.8
-    })
+def format_novel_result(novel_data: dict, original_url: str = "") -> str:
+    """
+    封装小说解析结果，去除番茄链接信息，提供清晰格式
+    
+    参数:
+        novel_data: 小说数据字典
+        original_url: 原始URL（可选，用于记录但不显示）
+    
+    返回:
+        格式化的小说信息字符串
+    """
+    # 提取小说信息
+    title = novel_data.get('title', '未知标题')
+    status_list = novel_data.get('status', [])
+    status = ', '.join(status_list) if status_list else '未知状态'
+    word_count = novel_data.get('word_count', '未知字数')
+    
+    # 处理最后更新信息
+    last_update = novel_data.get('last_update', {})
+    last_chapter = last_update.get('chapter', '未知章节')
+    last_time = last_update.get('time', '未知时间')
+    
+    # 处理简介
+    summary = novel_data.get('summary', '无简介')
+    
+    # 处理目录信息（如果有）
+    toc = novel_data.get('toc', [])
+    toc_info = ""
+    if toc:
+        # 只显示前5章
+        visible_chapters = toc[:5]
+        chapter_titles = [chap.get('title', '未知章节') for chap in visible_chapters]
+        locked_count = sum(1 for chap in visible_chapters if chap.get('locked', False))
+        toc_info = f"\n目录预览（前{len(visible_chapters)}章）: {', '.join(chapter_titles)}"
+        if locked_count > 0:
+            toc_info += f"\n其中有{locked_count}章是付费章节"
+    
+    # 构建格式化结果
+    formatted_result = f"""📚 小说解析结果：
 
+📖 标题: {title}
+🏷️ 状态: {status}
+📊 字数: {word_count}
+🕒 最后更新: {last_chapter} ({last_time})
+
+📝 简介:
+{summary}
+"""
+    
+    # 添加目录信息（如果有）
+    if toc_info:
+        formatted_result += f"\n{toc_info}"
+    
+    # 添加解析成功提示（但不显示原始URL）
+    formatted_result += f"\n\n✅ 小说信息解析完成"
+    
+    return formatted_result
+
+
+def deduplicate_context_info(context_info: Optional[List[Dict[str, Any]]]) -> Optional[List[Dict[str, Any]]]:
+    """
+    去重context_info中的重复上下文
+    
+    参数:
+        context_info: 上下文信息列表，每个元素是一个字典
+    
+    返回:
+        去重后的上下文信息列表
+    """
+    if not context_info:
+        return context_info
+    
+    # 用于跟踪已见过的上下文标识
+    seen_ids = set()
+    deduplicated = []
+    
+    for item in context_info:
+        # 尝试获取上下文的唯一标识
+        # 可能是id、context_id、name等字段
+        item_id = None
+        
+        # 尝试不同的字段作为标识
+        for field in ['id', 'context_id', 'name', 'title']:
+            if field in item and item[field]:
+                item_id = str(item[field])
+                break
+        
+        # 如果没有找到标识字段，使用整个字典的字符串表示
+        if not item_id:
+            item_id = str(item)
+        
+        # 如果这个标识还没有出现过，添加到结果中
+        if item_id not in seen_ids:
+            seen_ids.add(item_id)
+            deduplicated.append(item)
+        else:
+            print(f"⚠️ 检测到重复上下文，已去重: {item_id}")
+    
+    # 打印去重统计信息
+    if len(context_info) != len(deduplicated):
+        print(f"✅ 上下文去重完成: {len(context_info)} -> {len(deduplicated)} 个，减少了 {len(context_info) - len(deduplicated)} 个重复项")
+    
+    return deduplicated
+
+
+# 数据模型
 class SaveContextRequest(BaseModel):
     title: str
     type: str = "novel"
@@ -119,20 +223,7 @@ class EncodingMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(EncodingMiddleware)
 
-@app.get("/")
-async def root():
-    """根端点，返回API信息"""
-    return {
-        "name": "AI小说生成器API",
-        "version": "1.0.0",
-        "description": "连接Electron客户端和LangChain后端",
-        "endpoints": {
-            "health": "/api/health",
-            "contexts": "/api/contexts",
-            "generate_novel": "/api/generate/novel (POST)",
-            "context_detail": "/api/context/{context_id}"
-        }
-    }
+
 
 @app.get("/api/health")
 async def health_check():
@@ -358,6 +449,14 @@ async def create_context(request: CreateContextRequest):
         if not context_type:
             context_type = ContextType.CUSTOM
         
+        # 对context_info进行去重处理，避免重复上下文消耗token
+        deduplicated_context_info = None
+        if context_info:
+            deduplicated_context_info = deduplicate_context_info(context_info)
+            print(f"📊 上下文去重统计: 原始 {len(context_info) if context_info else 0} 个 -> 去重后 {len(deduplicated_context_info) if deduplicated_context_info else 0} 个")
+        else:
+            deduplicated_context_info = context_info
+        
         # 创建上下文
         context_id = advanced_context_manager.create_context(
             name=name,
@@ -365,18 +464,39 @@ async def create_context(request: CreateContextRequest):
             # content=content or "",
             content="",
             parent_id=parent_id,
-            metadata={"context_info": context_info}
+            metadata={"context_info": deduplicated_context_info}
         )
         
         # 构建用户消息：基于上下文信息生成初始内容
+        # 根据用户要求：根节点创建上下文信息的时候，parent_id为null，不要填充虚拟id
         user_message = f"""
             名称：{name}
             类型：{context_type}
-            父节点ID：{parent_id if parent_id else '无'}
-            上下文信息：{context_info if context_info else '无'}
+            父节点ID：{parent_id if parent_id is not None else ''}
+            上下文信息：{deduplicated_context_info if deduplicated_context_info else '无'}
             内容: {content if content else '（无初始内容）'}
         """
         print(f"用户消息: {user_message}")
+        
+        # 检测用户消息中是否包含番茄小说链接（精确匹配fanqienovel.com/page/）
+        import re
+        # 更精确的匹配模式：必须包含fanqienovel.com/page/
+        fanqie_pattern = r'https?://[^\s]*fanqienovel\.com/page/[^\s]*'
+        fanqie_matches = re.findall(fanqie_pattern, user_message)
+        has_fanqie_link = len(fanqie_matches) > 0
+        
+        if has_fanqie_link:
+            print(f"🔍 检测到番茄小说链接: {fanqie_matches}")
+            # 如果有番茄链接，在用户消息中添加明确指示
+            fanqie_url = fanqie_matches[0]
+            user_message += f"\n\n重要提示：检测到番茄小说链接。请使用novel_tool工具解析此链接。链接: {fanqie_url}"
+        else:
+            # 也检查是否包含fanqienovel.com但不包含/page/，这可能是其他页面
+            other_fanqie_pattern = r'https?://[^\s]*fanqienovel\.com[^\s]*'
+            other_matches = re.findall(other_fanqie_pattern, user_message)
+            if other_matches:
+                print(f"⚠️ 检测到番茄网站链接但不是小说详情页: {other_matches}")
+                print("ℹ️ 这不是小说详情页链接，不会调用novel_tool工具")
         
         # 调用大模型生成内容
         generated_content = ""
@@ -389,16 +509,130 @@ async def create_context(request: CreateContextRequest):
                 # 添加系统消息（如果可用）
                 if system_prompt:
                     messages.append(system_prompt)
+                
                 # 添加用户消息
                 messages.append(HumanMessage(content=user_message))
-                print(f"构建消息列表，{messages}")
+                print(f"构建消息列表，消息数量: {len(messages)}")
+                
+                # 只有在检测到番茄链接时才绑定工具到LLM
+                current_llm = llm
+                if novel_tool and has_fanqie_link:
+                    try:
+                        # 绑定工具到LLM
+                        current_llm = llm.bind_tools([novel_tool])
+                        print(f"✅ 检测到番茄链接，已绑定novel_tool到LLM")
+                    except Exception as bind_error:
+                        print(f"⚠️ 绑定工具失败: {bind_error}")
+                elif novel_tool:
+                    print("ℹ️ 未检测到番茄链接，不绑定工具到LLM")
+                else:
+                    print("ℹ️ novel_tool不可用，使用基础LLM")
+                
                 # 调用LLM
-                response = await llm.ainvoke(messages)
-                print(f"LLM响应: {response}")                
-                if hasattr(response, 'content'):
+                print(f"调用LLM，是否绑定工具: {current_llm != llm}")
+                response = await current_llm.ainvoke(messages)
+                print(f"LLM响应类型: {type(response)}")
+                print(f"LLM响应: {response}")
+                
+                # 处理响应，检查是否有工具调用
+                if hasattr(response, 'tool_calls') and response.tool_calls:
+                    print(f"🔧 LLM调用了工具: {response.tool_calls}")
+                    # 处理工具调用
+                    tool_calls_processed = False
+                    for tool_call in response.tool_calls:
+                        if tool_call['name'] == 'novel_tool':
+                            print(f"🛠️ 执行novel_tool工具调用")
+                            # 从工具调用参数中获取URL
+                            tool_args = tool_call.get('args', {})
+                            fanqie_url = tool_args.get('url', '')
+                            tool_context_id = tool_args.get('context_id', context_id)
+                            
+                            if not fanqie_url:
+                                # 如果没有提供URL，尝试从用户消息中提取
+                                import re
+                                fanqie_pattern = r'https?://[^\s]*fanqienovel\.com[^\s]*'
+                                matches = re.findall(fanqie_pattern, user_message)
+                                if matches:
+                                    fanqie_url = matches[0]
+                                    print(f"🔍 从用户消息中提取番茄链接: {fanqie_url}")
+                            
+                            if fanqie_url:
+                                # 执行工具调用
+                                try:
+                                    tool_result = novel_tool.invoke({
+                                        'url': fanqie_url,
+                                        'context_id': tool_context_id
+                                    })
+                                    print(f"工具执行结果: {tool_result}")
+                                    
+                                    # 将工具结果添加到生成内容中，并进行封装处理
+                                    if isinstance(tool_result, str):
+                                        try:
+                                            tool_result_json = json.loads(tool_result)
+                                            if tool_result_json.get('status') == 'success':
+                                                novel_data = tool_result_json.get('data', {})
+                                                # 封装结果，去除番茄链接信息
+                                                generated_content = format_novel_result(novel_data, fanqie_url)
+                                                
+                                                # 如果工具调用成功，还可以将解析结果保存到上下文
+                                                saved_context_id = tool_result_json.get('context_id')
+                                                if saved_context_id:
+                                                    generated_content += f"\n\n小说数据已保存到上下文: {saved_context_id}"
+                                            else:
+                                                generated_content = f"解析番茄链接失败: {tool_result_json.get('data', {}).get('message', '未知错误')}"
+                                        except json.JSONDecodeError:
+                                            generated_content = f"工具返回结果解析失败: {tool_result}"
+                                    else:
+                                        generated_content = f"工具执行完成: {str(tool_result)[:200]}..."
+                                    
+                                    tool_calls_processed = True
+                                except Exception as tool_error:
+                                    generated_content = f"工具执行失败: {str(tool_error)}"
+                            else:
+                                generated_content = "LLM尝试调用novel_tool但没有提供有效的番茄链接URL。"
+                        else:
+                            generated_content = f"LLM调用了未知工具: {tool_call['name']}"
+                    
+                    # 如果没有处理任何工具调用，使用LLM的响应内容
+                    if not tool_calls_processed and hasattr(response, 'content'):
+                        generated_content = response.content
+                elif hasattr(response, 'content'):
                     generated_content = response.content
                 else:
                     generated_content = str(response)
+                    
+                # 如果检测到番茄链接但LLM没有调用工具，我们强制调用工具
+                if has_fanqie_link and not (hasattr(response, 'tool_calls') and response.tool_calls):
+                    print(f"⚠️ 检测到番茄链接但LLM没有调用工具，强制调用工具")
+                    fanqie_url = fanqie_matches[0]
+                    try:
+                        tool_result = novel_tool.invoke({
+                            'url': fanqie_url,
+                            'context_id': context_id
+                        })
+                        print(f"强制工具执行结果: {tool_result}")
+                        
+                        # 将工具结果添加到生成内容中，并进行封装处理
+                        if isinstance(tool_result, str):
+                            try:
+                                tool_result_json = json.loads(tool_result)
+                                if tool_result_json.get('status') == 'success':
+                                    novel_data = tool_result_json.get('data', {})
+                                    # 封装结果，去除番茄链接信息
+                                    generated_content = format_novel_result(novel_data, fanqie_url)
+                                    
+                                    # 如果工具调用成功，还可以将解析结果保存到上下文
+                                    saved_context_id = tool_result_json.get('context_id')
+                                    if saved_context_id:
+                                        generated_content += f"\n\n小说数据已保存到上下文: {saved_context_id}"
+                                else:
+                                    generated_content = f"解析番茄链接失败: {tool_result_json.get('data', {}).get('message', '未知错误')}"
+                            except json.JSONDecodeError:
+                                generated_content = f"工具返回结果解析失败: {tool_result}"
+                        else:
+                            generated_content = f"工具执行完成: {str(tool_result)[:200]}..."
+                    except Exception as tool_error:
+                        generated_content = f"强制工具执行失败: {str(tool_error)}"
                     
                 # 清理内容
                 generated_content = (
@@ -514,6 +748,11 @@ async def delete_context(context_id: str):
 class MoveContextRequest(BaseModel):
     new_parent_id: Optional[str] = None
 
+class ParseNovelRequest(BaseModel):
+    """解析小说链接请求"""
+    url: str
+    context_id: Optional[str] = None
+
 @app.post("/api/context/{context_id}/move")
 async def move_context(context_id: str, request: MoveContextRequest):
     """移动上下文到新的父节点"""
@@ -528,6 +767,9 @@ async def move_context(context_id: str, request: MoveContextRequest):
             raise HTTPException(status_code=400, detail="移动失败：可能形成循环引用或上下文不存在")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"移动上下文失败: {str(e)}")
+
+
+    
 
 def run_server():
     """运行Web服务器"""

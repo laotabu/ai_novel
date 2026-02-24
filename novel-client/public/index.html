@@ -142,7 +142,110 @@
                 </div>
             </section>
 
-            <!-- 右侧：聊天和生成（已移除） -->
+            <!-- 右侧：生成小说对话框 -->
+            <section class="panel panel-right">
+                <div class="panel-header">
+                    <h2><i class="fas fa-magic"></i> 生成小说</h2>
+                </div>
+                <div class="panel-content">
+                    <div class="novel-generation-form">
+                        <!-- 上下文选择 -->
+                        <div class="form-section">
+                            <h3><i class="fas fa-layer-group"></i> 选择上下文</h3>
+                            <div class="selected-contexts-preview" id="selectedContextsPreview">
+                                <div class="empty-state">
+                                    <i class="fas fa-inbox"></i>
+                                    <p>未选择任何上下文</p>
+                                    <p class="text-muted">在左侧列表或树状图中选择上下文</p>
+                                </div>
+                            </div>
+                            <div class="form-hint">
+                                <i class="fas fa-info-circle"></i> 已选择 <span id="selectedForGenerationCount">0</span> 个上下文
+                            </div>
+                        </div>
+                        
+                        <!-- 提示词输入 -->
+                        <div class="form-section">
+                            <h3><i class="fas fa-keyboard"></i> 提示词</h3>
+                            <div class="form-group">
+                                <textarea 
+                                    id="generationPrompt" 
+                                    class="form-control" 
+                                    rows="6" 
+                                    placeholder="请输入生成小说的提示词...
+例如：
+- 基于选中的上下文，续写下一章
+- 为当前故事添加一个转折
+- 完善人物对话
+- 扩展世界观设定"></textarea>
+                            </div>
+                            <div class="form-hint">
+                                <i class="fas fa-lightbulb"></i> 提示词越详细，生成效果越好
+                            </div>
+                        </div>
+                        
+                        <!-- 生成参数 -->
+                        <div class="form-section">
+                            <h3><i class="fas fa-sliders-h"></i> 生成参数</h3>
+                            <div class="form-group">
+                                <label for="creativityLevel">
+                                    <i class="fas fa-brain"></i> 创意度
+                                    <span class="param-value" id="creativityValue">0.7</span>
+                                </label>
+                                <input 
+                                    type="range" 
+                                    id="creativityLevel" 
+                                    class="form-control-range" 
+                                    min="0" 
+                                    max="1" 
+                                    step="0.1" 
+                                    value="0.7">
+                            </div>
+                            <div class="form-group">
+                                <label for="outputLength">
+                                    <i class="fas fa-ruler"></i> 输出长度
+                                    <span class="param-value" id="lengthValue">中等</span>
+                                </label>
+                                <select id="outputLength" class="form-control">
+                                    <option value="short">短 (约200字)</option>
+                                    <option value="medium" selected>中等 (约500字)</option>
+                                    <option value="long">长 (约1000字)</option>
+                                    <option value="very-long">很长 (约2000字)</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- 生成按钮 -->
+                        <div class="form-actions">
+                            <button 
+                                class="btn btn-primary btn-block" 
+                                id="generateNovelBtn"
+                                onclick="novelGenerator.generateNovel()">
+                                <i class="fas fa-magic"></i> 生成小说
+                            </button>
+                            <div class="form-hint text-center">
+                                <i class="fas fa-clock"></i> 生成过程可能需要一些时间，请耐心等待
+                            </div>
+                        </div>
+                        
+                        <!-- 生成结果 -->
+                        <div class="form-section result-section" style="display: none;" id="generationResult">
+                            <h3><i class="fas fa-scroll"></i> 生成结果</h3>
+                            <div class="generation-result-content" id="generationResultContent">
+                                <!-- 结果将在这里显示 -->
+                            </div>
+                            <div class="result-actions">
+                                <button class="btn btn-success" onclick="novelGenerator.saveGeneratedContent()">
+                                    <i class="fas fa-save"></i> 保存到上下文
+                                </button>
+                                <button class="btn btn-secondary" onclick="novelGenerator.clearGenerationResult()">
+                                    <i class="fas fa-times"></i> 清除结果
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
         </main>
 
         <!-- 底部状态栏 -->

@@ -1,0 +1,22 @@
+{
+  "id": "3",
+  "name": "人物设定",
+  "type": "人物设定",
+  "content": [],
+  "project_id": "default",
+  "metadata": {
+    "context_info": null
+  },
+  "parent_id": null,
+  "children": [
+    "5ad37dfc",
+    "821c6b7b",
+    "91a0f6b9",
+    "ecb56602",
+    "d99e7d14",
+    "c4e6b777"
+  ],
+  "created_at": "2026-02-13T09:43:51.135700",
+  "updated_at": "2026-02-23T21:13:22.409769",
+  "selected_items": []
+}
