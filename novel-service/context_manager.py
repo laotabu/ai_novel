@@ -238,14 +238,27 @@ class ContextItem:
 class AdvancedContextManager:
     """高级上下文管理器（支持树状结构）"""
     
+    # 类型值到子目录名的映射
+    TYPE_DIR_MAP = {
+        "人物设定": "人物设定",
+        "世界设定": "世界设定",
+        "作品大纲": "作品大纲",
+        "事件细纲": "事件细纲",
+        "会话历史": "会话历史",
+        "小说数据": "小说数据",
+        "自定义": "自定义",
+    }
+    
     def __init__(self, data_dir: str = "context_data"):
         self.data_dir = data_dir
         self.contexts: Dict[str, ContextItem] = {}
         self.selected_contexts: Set[str] = set()  # 当前选中的上下文ID
         self.current_project = "default"
         
-        # 创建数据目录
+        # 创建数据目录和类型子目录
         os.makedirs(data_dir, exist_ok=True)
+        for subdir in self.TYPE_DIR_MAP.values():
+            os.makedirs(os.path.join(data_dir, subdir), exist_ok=True)
         
         # 加载现有数据
         self._load_all_contexts()
@@ -253,30 +266,53 @@ class AdvancedContextManager:
         # 重建树状结构关系
         self._rebuild_tree_structure()
     
-    def _get_context_filepath(self, context_id: str) -> str:
-        """获取上下文文件路径"""
-        return os.path.join(self.data_dir, f"{context_id}.json")
+    def _get_subdir_for_type(self, type_value: str) -> str:
+        """根据类型获取子目录名"""
+        return self.TYPE_DIR_MAP.get(type_value, "自定义")
+    
+    def _get_context_filepath(self, context_id: str, context_type: Optional[ContextType] = None) -> str:
+        """获取上下文文件路径（按类型存入子目录）"""
+        if context_type:
+            subdir = self._get_subdir_for_type(context_type.value)
+        else:
+            # 已有上下文，从内存中查找类型
+            ctx = self.contexts.get(context_id)
+            if ctx:
+                subdir = self._get_subdir_for_type(ctx.type.value)
+            else:
+                # 未找到，遍历子目录查找文件
+                for subdir_name in self.TYPE_DIR_MAP.values():
+                    candidate = os.path.join(self.data_dir, subdir_name, f"{context_id}.json")
+                    if os.path.exists(candidate):
+                        return candidate
+                # 兜底：使用自定义目录
+                subdir = "自定义"
+        return os.path.join(self.data_dir, subdir, f"{context_id}.json")
     
     def _load_all_contexts(self):
-        """加载所有上下文"""
+        """加载所有上下文（递归扫描子目录）"""
         if not os.path.exists(self.data_dir):
             return
         
-        for filename in os.listdir(self.data_dir):
-            if filename.endswith('.json'):
-                filepath = os.path.join(self.data_dir, filename)
-                try:
-                    with open(filepath, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        context_item = ContextItem.from_dict(data)
-                        self.contexts[context_item.id] = context_item
-                except Exception as e:
-                    print(f"[⚠️] 加载上下文失败 {filename}: {e}", file=sys.stderr)
+        # 遍历数据目录（包括子目录）
+        for root, dirs, files in os.walk(self.data_dir):
+            for filename in files:
+                if filename.endswith('.json'):
+                    filepath = os.path.join(root, filename)
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            context_item = ContextItem.from_dict(data)
+                            self.contexts[context_item.id] = context_item
+                    except Exception as e:
+                        print(f"[⚠️] 加载上下文失败 {filename}: {e}", file=sys.stderr)
     
     def _save_context(self, context_item: ContextItem):
-        """保存单个上下文"""
+        """保存单个上下文（按类型存入子目录）"""
         try:
-            filepath = self._get_context_filepath(context_item.id)
+            filepath = self._get_context_filepath(context_item.id, context_item.type)
+            # 确保子目录存在
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
             temp_path = filepath + ".tmp"
             with open(temp_path, 'w', encoding='utf-8') as f:
                 json.dump(context_item.to_dict(), f, ensure_ascii=False, indent=2)

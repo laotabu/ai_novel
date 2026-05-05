@@ -1,0 +1,20 @@
+{
+  "id": "6c12b851",
+  "name": "张三",
+  "type": "人物设定",
+  "content": [
+    {
+      "id": "item_1",
+      "content": "张三，性格勇敢正直，是一名年轻的剑客",
+      "created_at": "2026-05-05T14:59:40.664561",
+      "updated_at": "2026-05-05T14:59:40.664561"
+    }
+  ],
+  "project_id": "default",
+  "metadata": {},
+  "parent_id": null,
+  "children": [],
+  "created_at": "2026-05-05T14:59:40.664561",
+  "updated_at": "2026-05-05T14:59:40.664561",
+  "selected_items": []
+}

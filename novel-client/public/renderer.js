@@ -42,6 +42,12 @@ class NovelGenerator {
         this.multiSelectStartNodeId = null;
         this.multiSelectEndNodeId = null;
         
+        // 编辑器相关属性
+        this.editorContent = '';
+        this.lastSavedContent = '';
+        this.isSaving = false;
+        this.saveInterval = null;
+        
         // 绑定事件
         this.bindEvents();
         
@@ -88,6 +94,18 @@ class NovelGenerator {
         document.addEventListener('keydown', (e) => {
             this.isCtrlPressed = e.ctrlKey || e.metaKey; // metaKey for Mac
             this.isShiftPressed = e.shiftKey;
+            
+            // 监听Ctrl+G（或Cmd+G）唤起AI辅助面板
+            if ((e.ctrlKey || e.metaKey) && e.key === 'g') {
+                e.preventDefault();
+                this.toggleAiAssistPanel();
+            }
+            
+            // 监听Ctrl+S保存编辑器内容
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault();
+                this.saveEditorContent();
+            }
         });
         
         document.addEventListener('keyup', (e) => {
@@ -114,6 +132,62 @@ class NovelGenerator {
             }
         });
     });
+    
+    // AI辅助按钮事件
+    const aiAssistBtn = document.getElementById('aiAssistBtn');
+    if (aiAssistBtn) {
+        aiAssistBtn.addEventListener('click', () => this.toggleAiAssistPanel());
+    }
+    
+    // 关闭AI面板按钮
+    const closeAiPanelBtn = document.getElementById('closeAiPanelBtn');
+    if (closeAiPanelBtn) {
+        closeAiPanelBtn.addEventListener('click', () => this.hideAiAssistPanel());
+    }
+    
+    // AI生成按钮
+    const aiGenerateBtn = document.getElementById('aiGenerateBtn');
+    if (aiGenerateBtn) {
+        aiGenerateBtn.addEventListener('click', () => this.generateAiContent());
+    }
+    
+    // AI动作按钮
+    const aiActionBtns = document.querySelectorAll('.ai-action-btn');
+    aiActionBtns.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const action = e.target.dataset.action || e.target.closest('.ai-action-btn').dataset.action;
+            this.handleAiAction(action);
+        });
+    });
+    
+    // AI响应操作按钮
+    document.addEventListener('click', (e) => {
+        if (e.target.closest('[data-action="apply"]')) {
+            this.applyAiResponse();
+        } else if (e.target.closest('[data-action="discard"]')) {
+            this.discardAiResponse();
+        }
+    });
+    
+    // AI输入框回车键支持
+    const aiPromptInput = document.getElementById('aiPromptInput');
+    if (aiPromptInput) {
+        aiPromptInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.generateAiContent();
+            }
+        });
+    }
+    
+    // 保存编辑器按钮
+    const saveEditorBtn = document.getElementById('saveEditorBtn');
+    if (saveEditorBtn) {
+        saveEditorBtn.addEventListener('click', () => this.saveEditorContent());
+    }
+    
+    // 初始化编辑器字数统计
+    this.initWordCount();
 }
 
     // 切换左侧选项卡
@@ -433,31 +507,12 @@ bindContextMenuEvents() {
                     </div>
                 </div>
             `;
-            
-            // 如果节点展开且有子节点，渲染子节点
-            // if (hasChildren && isExpanded) {
-            //     html += this.renderTreeNodes(node.children, level + 1);
-            // }
         }
         
         return html;
     }
     
-    // 切换树节点展开/折叠
-    toggleTreeNode(nodeId, event) {
-        if (event) {
-            event.stopPropagation(); // 阻止事件冒泡
-        }
-        
-        if (this.expandedNodes.has(nodeId)) {
-            this.expandedNodes.delete(nodeId);
-        } else {
-            this.expandedNodes.add(nodeId);
-        }
-        
-        // 重新渲染树状列表
-        this.renderContexts();
-    }
+
     
     getContextIcon(type) {
         const iconMap = {
@@ -519,9 +574,6 @@ bindContextMenuEvents() {
         
         // 显示上下文详情
         this.showContextDetails(contextId);
-        
-        // 更新树状图，以该节点对应的根节点展开
-        this.updateTreeWithRootNode(contextId);
         
         // 更新UI
         this.updateSelectionCount();
@@ -588,51 +640,16 @@ bindContextMenuEvents() {
     
     toggleContextSelection(contextId) {
         if (this.selectedContexts.has(contextId)) {
-            // 取消选择节点：只取消选中当前节点，不取消选中子节点
+            // 取消选择节点：只取消选中当前节点
             this.selectedContexts.delete(contextId);
             console.log("❌ 取消选择上下文:", contextId);
         } else {
-            // 选择节点：选中当前节点，并递归选中所有子节点
+            // 选择节点：只选中当前节点，不再递归选中子节点
             this.selectedContexts.add(contextId);
             console.log("✅ 选择上下文:", contextId);
-            
-            // 获取所有子节点ID并选中它们
-            const childIds = this.getAllChildNodeIds(contextId);
-            if (childIds.length === 0) {
-                // 如果从树状结构没找到，尝试从扁平列表获取
-                const childIdsFromFlatList = this.getAllChildNodeIdsFromFlatList(contextId);
-                childIdsFromFlatList.forEach(childId => {
-                    if (!this.selectedContexts.has(childId)) {
-                        this.selectedContexts.add(childId);
-                        console.log("✅ 自动选择子节点:", childId);
-                    }
-                });
-            } else {
-                childIds.forEach(childId => {
-                    if (!this.selectedContexts.has(childId)) {
-                        this.selectedContexts.add(childId);
-                        console.log("✅ 自动选择子节点:", childId);
-                    }
-                });
-            }
         }
-        
-        // 更新UI样式
+        // 更新UI样式 - 只更新当前节点
         this.updateNodeSelectionStyle(contextId);
-        
-        // 更新所有子节点的UI样式
-        const allChildIds = this.getAllChildNodeIds(contextId);
-        if (allChildIds.length === 0) {
-            const childIdsFromFlatList = this.getAllChildNodeIdsFromFlatList(contextId);
-            childIdsFromFlatList.forEach(childId => {
-                this.updateNodeSelectionStyle(childId);
-            });
-        } else {
-            allChildIds.forEach(childId => {
-                this.updateNodeSelectionStyle(childId);
-            });
-        }
-        
         // 更新UI状态
         this.updateSelectionCount();
     }
@@ -728,7 +745,6 @@ clearSelection() {
                 contextElement.classList.remove('selected');
             }
         }
-        
         // 更新已选中上下文列表中的节点样式
         const selectedContextItem = document.querySelector(`.selected-context-item[data-context-id="${contextId}"]`);
         if (selectedContextItem) {
@@ -743,6 +759,31 @@ clearSelection() {
             } else {
                 selectedContextItem.classList.remove('selected');
                 selectedContextItem.classList.remove('current');
+            }
+        }
+        // 更新树状图中的节点高亮
+        this.updateTreeNodeHighlight(contextId);
+    }
+    
+    // 更新树状图节点高亮
+    updateTreeNodeHighlight(contextId) {
+        if (!this.treeG) return;
+        // 查找对应的树节点
+        const treeNode = this.treeG.selectAll('.tree-node').filter(d => d.data.id === contextId);
+        console.log("🔍 更新树状图节点高亮:", contextId, treeNode.empty() ? "未找到节点" : "找到节点");
+        if (!treeNode.empty()) {
+            const circle = treeNode.select('circle');
+            if (this.selectedContexts.has(contextId)) {
+                // 选中状态：添加selected和highlighted类
+                circle.classed('selected', true);
+                circle.classed('highlighted', true);
+            } else {
+                // 取消选中状态：移除selected和highlighted类
+                circle.classed('selected', false);
+                circle.classed('highlighted', false);
+                // 恢复默认样式
+                circle.attr('stroke-width', 2)
+                      .attr('stroke', '#fff');
             }
         }
     }
@@ -1297,7 +1338,6 @@ clearSelection() {
                 dateElement.textContent = this.formatDate(nodeData.created_at || nodeData.updated_at) || '未知';
             }
             if (contentElement) {
-                console.log("📝 内容预览:", nodeData.content);
                 let contentPreview = '无内容';
                 if (nodeData.content) {
                     if (Array.isArray(nodeData.content)) {
@@ -1478,14 +1518,6 @@ clearSelection() {
                 console.log("🗑️ 调用deleteContextNode()，保存的节点ID:", savedNodeId);
                 this.deleteContextNode(savedNodeId);
                 break;
-            case 'expand':
-                console.log("📈 调用expandAllNodes()");
-                this.expandAllNodes();
-                break;
-            case 'collapse':
-                console.log("📉 调用collapseAllNodes()");
-                this.collapseAllNodes();
-                break;
             default:
                 console.error("❌ 未知的action:", action);
         }
@@ -1591,54 +1623,22 @@ clearSelection() {
         this.initRelatedContextsSelect();
     }
 
-    // 显示加载动画
-    showLoading(text = '处理中...') {
-        const loadingOverlay = document.getElementById('loadingOverlay');
-        const loadingText = document.getElementById('loadingText');
-        
-        if (loadingOverlay && loadingText) {
-            loadingText.textContent = text;
-            loadingOverlay.style.display = 'flex';
-        }
-    }
-    
-    // 隐藏加载动画
-    hideLoading() {
-        const loadingOverlay = document.getElementById('loadingOverlay');
-        if (loadingOverlay) {
-            loadingOverlay.style.display = 'none';
-        }
-    }
 
     async submitAddNode() {
-        console.log("📤 提交添加节点");
-        console.log("📤 modalParentId:", this.modalParentId, "类型:", typeof this.modalParentId);
-        console.log("📤 当前菜单节点ID:", this.currentContextMenuNodeId, "类型:", typeof this.currentContextMenuNodeId);
-        
         const nodeName = document.getElementById('nodeName')?.value || '新节点';
         const nodeType = document.getElementById('nodeType')?.value || '自定义';
         const nodeContent = document.getElementById('nodeContent')?.value || '';
-        
         // 获取选中的联系上下文ID
         const relatedContextIds = this.getSelectedRelatedContexts();
-        console.log("📋 选中的联系上下文ID:", relatedContextIds);
-        
-        console.log("节点信息:", { nodeName, nodeType, nodeContent, relatedContextIds });
-        
-        // 显示加载动画
-        this.showLoading('正在添加节点，请稍候...');
-        
         try {
             // 处理parentId - 优先使用modalParentId，因为它是在showAddNodeModal中存储的
             let processedParentId = null;
-            
             // 首先检查modalParentId
             if (this.modalParentId && 
                 this.modalParentId !== 'null' && 
                 this.modalParentId !== 'undefined' && 
                 this.modalParentId !== '') {
                 processedParentId = this.modalParentId;
-                console.log("🔄 使用modalParentId作为父节点ID:", processedParentId);
             }
             // 其次检查当前菜单节点ID
             else if (this.currentContextMenuNodeId && 
@@ -1646,50 +1646,44 @@ clearSelection() {
                      this.currentContextMenuNodeId !== 'undefined' && 
                      this.currentContextMenuNodeId !== '') {
                 processedParentId = this.currentContextMenuNodeId;
-                console.log("🔄 使用当前菜单节点ID作为父节点ID:", processedParentId);
             }
             // 如果都没有，则为null（根节点）
             else {
                 processedParentId = null;
-                console.log("🔄 父节点ID为null（根节点）");
             }
+        // 获取选中上下文的内容信息（只要对应的节点内容）
+        let contextInfoArray = [];
+        if (relatedContextIds.length > 0) {
+            // 获取选中上下文的内容
+            const contextsData = await this.getRelatedContextsData(relatedContextIds);
+            console.log("📋 选中上下文的内容信息:", contextsData);
             
-            // 清理parentId - 确保它是正确的类型
-            if (processedParentId === 'null' || processedParentId === 'undefined' || processedParentId === '') {
-                processedParentId = null;
-                console.log("🔄 清理父节点ID为null");
-            }
+            // 构建上下文信息数组，每个元素包含 {id, 节点类型, 节点内容}
+            contextInfoArray = contextsData.map(context => {
+                // 提取内容
+                let content = '';
+                if (Array.isArray(context.content)) {
+                    content = context.content.map(item => {
+                        if (typeof item === 'object' && item.content) {
+                            return item.content;
+                        }
+                        return String(item);
+                    }).join('\n');
+                } else {
+                    content = String(context.content || '');
+                }
+                
+                // 使用节点的原始id作为context_info的id
+                // 这样在发送给大模型时可以根据id去重
+                return {
+                    id: context.id, // 使用节点的原始id
+                    type: context.type || '未知类型',
+                    content: content
+                };
+            });
             
-            // 获取选中上下文的内容信息（只要对应的节点内容）
-            let contextInfoArray = [];
-            if (relatedContextIds.length > 0) {
-                // 获取选中上下文的内容
-                const contextsData = await this.getRelatedContextsData(relatedContextIds);
-                console.log("📋 选中上下文的内容信息:", contextsData);
-                
-                // 构建上下文信息数组，每个元素包含 {节点类型, 节点内容}
-                contextInfoArray = contextsData.map(context => {
-                    // 提取内容
-                    let content = '';
-                    if (Array.isArray(context.content)) {
-                        content = context.content.map(item => {
-                            if (typeof item === 'object' && item.content) {
-                                return item.content;
-                            }
-                            return String(item);
-                        }).join('\n');
-                    } else {
-                        content = String(context.content || '');
-                    }
-                    
-                    return {
-                        type: context.type || '未知类型',
-                        content: content
-                    };
-                });
-                
-                console.log("📋 构建的上下文信息数组:", contextInfoArray);
-            }
+            console.log("📋 构建的上下文信息数组（包含id）:", contextInfoArray);
+        }
             
             // 构建封装好的数据结构 - 按照用户要求封装
             // {节点名称， 节点类型， 上下文信息:[{节点类型,节点内容 }], 节点内容}
@@ -1701,48 +1695,21 @@ clearSelection() {
                 parent_id: processedParentId // 保留parent_id用于树状结构
             };
             
-            console.log("📤 发送添加节点请求到:", `${this.serverUrl}/api/context/create`);
-            console.log("📤 封装的数据结构:", JSON.stringify(nodeData, null, 2));
-            
-            // 发送请求到后端 - 注意：API路径是 /api/context/create
-            const response = await fetch(`${this.serverUrl}/api/context/create`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(nodeData)
-            });
-            
-            console.log("📤 添加节点响应状态:", response.status, "状态文本:", response.statusText);
-            
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.error("❌ 添加节点HTTP错误:", response.status, errorText);
-                throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
-            }
-            
-            const result = await response.json();
-            console.log("✅ 添加节点成功:", result);
-            
-            // 隐藏模态框
+            // 隐藏模态框，显示流式结果模态框
             this.hideModal();
-            
             // 清空modalParentId
             this.modalParentId = null;
-            
-            // 刷新上下文
-            await this.refreshContexts();
-            
-            // 显示返回的结果
-            this.showNodeCreationResult(result, nodeName, processedParentId, relatedContextIds.length);
-            
+            // 显示流式结果模态框
+            this.showStreamingResultModal(nodeName, nodeType, processedParentId, relatedContextIds.length);
+            // 发送流式请求到后端
+            await this.sendStreamingCreateRequest(nodeData, nodeName, processedParentId, relatedContextIds.length);
         } catch (error) {
             console.error("❌ 添加节点失败:", error);
             console.error("❌ 错误堆栈:", error.stack);
-            
             // 清空modalParentId
             this.modalParentId = null;
-            
+            // 隐藏加载动画
+            this.hideLoading();
             this.showModal('添加失败', `
                 <div class="error-message">
                     <i class="fas fa-exclamation-triangle"></i>
@@ -1757,9 +1724,6 @@ clearSelection() {
                     </ul>
                 </div>
             `);
-        } finally {
-            // 无论成功还是失败，都隐藏加载动画
-            this.hideLoading();
         }
     }
             
@@ -2225,31 +2189,6 @@ clearSelection() {
         }
     }
 
-    expandAllNodes() {
-        console.log("📈 展开所有节点");
-        // 这里可以实现展开所有节点的逻辑
-        // 由于D3树状图默认是展开的，这里可以添加动画效果
-        this.showModal('功能提示', `
-            <div class="info-message">
-                <i class="fas fa-info-circle"></i>
-                <h3>展开所有节点</h3>
-                <p>树状图默认显示所有节点，此功能将在后续版本中实现动画效果。</p>
-            </div>
-        `);
-    }
-
-    collapseAllNodes() {
-        console.log("📉 折叠所有节点");
-        // 这里可以实现折叠所有节点的逻辑
-        this.showModal('功能提示', `
-            <div class="info-message">
-                <i class="fas fa-info-circle"></i>
-                <h3>折叠所有节点</h3>
-                <p>此功能将在后续版本中实现。</p>
-            </div>
-        `);
-    }
-
     initTreeVisualization() {
         const treeContainer = document.getElementById('treeContainer');
         if (!treeContainer) {
@@ -2496,7 +2435,10 @@ clearSelection() {
             // 立即处理点击，避免任何延迟
             setTimeout(() => {
                 this.handleTreeNodeClick(d.data.id);
+                this.renderSelectedContexts();
             }, 0);
+
+
         });
         
         // 添加节点悬停效果和提示框
@@ -2533,27 +2475,6 @@ clearSelection() {
             // 延迟隐藏提示框
             this.scheduleHideTooltip();
         });
-
-        
-        // 节点悬停事件 - 完全移除任何动画效果，只改变颜色
-        // nodes
-        // .on('mouseenter', (event, d) => {
-        //     event.stopPropagation();
-        
-        //     const node = d3.select(event.currentTarget);
-        
-        //     // 只改视觉，不改布局属性
-        //     node.select("circle")
-        //         .classed("hovered-node", true);
-        // })
-        // .on('mouseleave', (event, d) => {
-        //     event.stopPropagation();
-        
-        //     const node = d3.select(event.currentTarget);
-        
-        //     node.select("circle")
-        //         .classed("hovered-node", false);
-        // });
         // 更新节点计数显示
         this.updateTreeNodeCount(treeData.descendants().length);
     }
@@ -2693,6 +2614,12 @@ clearSelection() {
                         <button type="button" class="btn btn-sm btn-outline-secondary" onclick="novelGenerator.deselectAllTreeNodes()">
                             <i class="fas fa-square"></i> 全不选
                         </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="novelGenerator.expandAllTreeNodes()">
+                            <i class="fas fa-expand"></i> 展开全部
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="novelGenerator.collapseAllTreeNodes()">
+                            <i class="fas fa-compress"></i> 折叠全部
+                        </button>
                     </div>
                 </div>
                 <div class="tree-multiselect-container" id="treeMultiselectContainer">
@@ -2720,7 +2647,7 @@ clearSelection() {
             // 如果有子节点，添加展开/折叠按钮
             if (hasChildren) {
                 nodeHtml += `
-                        <button type="button" class="tree-node-toggle" data-node-id="${node.id}" title="展开/折叠" onclick="novelGenerator.toggleTreeNode(this)">
+                        <button class="tree-node-toggle" onclick="novelGenerator.toggleTreeNode('${node.id}')" title="展开/折叠">
                             <i class="fas fa-chevron-right"></i>
                         </button>
                 `;
@@ -2730,9 +2657,9 @@ clearSelection() {
                     </div>
             `;
             
-            // 如果有子节点，添加子节点容器
+            // 如果有子节点，添加子节点容器（默认展开）
             if (hasChildren) {
-                nodeHtml += `<div class="tree-node-children" id="children_${node.id}">`;
+                nodeHtml += `<div class="tree-node-children expanded" id="children_${node.id}">`;
                 for (const child of node.children) {
                     nodeHtml += generateTreeNode(child, level + 1);
                 }
@@ -2793,13 +2720,7 @@ clearSelection() {
         const nodeItem = checkbox.closest('.tree-node-item');
         if (!nodeItem) return;
         
-        // 如果选中父节点，递归选中所有子节点
-        if (isChecked) {
-            this.selectAllChildNodes(nodeId);
-        } else {
-            // 如果取消选中父节点，递归取消选中所有子节点
-            this.deselectAllChildNodes(nodeId);
-        }
+
         
         // 更新父节点的选中状态（如果子节点状态变化）
         this.updateParentNodeState(nodeId);
@@ -2808,38 +2729,8 @@ clearSelection() {
         this.updateSelectedContexts();
     }
     
-    // 递归选中所有子节点
-    selectAllChildNodes(parentNodeId) {
-        const childrenContainer = document.getElementById(`children_${parentNodeId}`);
-        if (!childrenContainer) return;
-        
-        // 选中当前容器的所有直接子节点的复选框
-        const childCheckboxes = childrenContainer.querySelectorAll('.related-context-checkbox');
-        childCheckboxes.forEach(checkbox => {
-            checkbox.checked = true;
-            
-            // 递归处理子节点的子节点
-            const childNodeId = checkbox.value;
-            this.selectAllChildNodes(childNodeId);
-        });
-    }
-    
-    // 递归取消选中所有子节点
-    deselectAllChildNodes(parentNodeId) {
-        const childrenContainer = document.getElementById(`children_${parentNodeId}`);
-        if (!childrenContainer) return;
-        
-        // 取消选中当前容器的所有直接子节点的复选框
-        const childCheckboxes = childrenContainer.querySelectorAll('.related-context-checkbox');
-        childCheckboxes.forEach(checkbox => {
-            checkbox.checked = false;
-            
-            // 递归处理子节点的子节点
-            const childNodeId = checkbox.value;
-            this.deselectAllChildNodes(childNodeId);
-        });
-    }
-    
+
+
     // 更新父节点的选中状态
     updateParentNodeState(nodeId) {
         // 查找父节点
@@ -2897,22 +2788,7 @@ clearSelection() {
         this.updateParentNodeState(parentNodeId);
     }
     
-    // 切换树节点展开/折叠
-    toggleTreeNode(button) {
-        const nodeId = button.dataset.nodeId;
-        const childrenContainer = document.getElementById(`children_${nodeId}`);
-        const icon = button.querySelector('i');
-        
-        if (childrenContainer.classList.contains('expanded')) {
-            childrenContainer.classList.remove('expanded');
-            icon.className = 'fas fa-chevron-right';
-            button.classList.remove('expanded');
-        } else {
-            childrenContainer.classList.add('expanded');
-            icon.className = 'fas fa-chevron-down';
-            button.classList.add('expanded');
-        }
-    }
+
     
     // 全选树节点
     selectAllTreeNodes() {
@@ -3041,6 +2917,78 @@ clearSelection() {
             selectedIds.push(checkbox.value);
         });
         return selectedIds;
+    }
+    
+    // 切换树节点展开/折叠状态
+    toggleTreeNode(nodeId) {
+        const childrenContainer = document.getElementById(`children_${nodeId}`);
+        const toggleButton = document.querySelector(`[data-node-id="${nodeId}"] .tree-node-toggle`);
+        
+        if (!childrenContainer || !toggleButton) {
+            console.warn(`⚠️ 未找到节点 ${nodeId} 的子容器或切换按钮`);
+            return;
+        }
+        
+        const isExpanded = childrenContainer.classList.contains('expanded');
+        const icon = toggleButton.querySelector('i');
+        
+        if (isExpanded) {
+            // 折叠
+            childrenContainer.classList.remove('expanded');
+            toggleButton.classList.remove('expanded');
+            if (icon) {
+                icon.className = 'fas fa-chevron-right';
+            }
+        } else {
+            // 展开
+            childrenContainer.classList.add('expanded');
+            toggleButton.classList.add('expanded');
+            if (icon) {
+                icon.className = 'fas fa-chevron-down';
+            }
+        }
+        
+        console.log(`🌳 切换节点 ${nodeId} 状态: ${isExpanded ? '折叠' : '展开'}`);
+    }
+    
+    // 展开所有树节点
+    expandAllTreeNodes() {
+        const childrenContainers = document.querySelectorAll('.tree-node-children');
+        const toggleButtons = document.querySelectorAll('.tree-node-toggle');
+        
+        childrenContainers.forEach(container => {
+            container.classList.add('expanded');
+        });
+        
+        toggleButtons.forEach(button => {
+            button.classList.add('expanded');
+            const icon = button.querySelector('i');
+            if (icon) {
+                icon.className = 'fas fa-chevron-down';
+            }
+        });
+        
+        console.log('🌳 展开所有树节点');
+    }
+    
+    // 折叠所有树节点
+    collapseAllTreeNodes() {
+        const childrenContainers = document.querySelectorAll('.tree-node-children');
+        const toggleButtons = document.querySelectorAll('.tree-node-toggle');
+        
+        childrenContainers.forEach(container => {
+            container.classList.remove('expanded');
+        });
+        
+        toggleButtons.forEach(button => {
+            button.classList.remove('expanded');
+            const icon = button.querySelector('i');
+            if (icon) {
+                icon.className = 'fas fa-chevron-right';
+            }
+        });
+        
+        console.log('🌳 折叠所有树节点');
     }
     
     // 获取选中上下文的内容数据
@@ -3396,8 +3344,6 @@ clearSelection() {
         // 选择对应的上下文
         this.handleContextClick(nodeId);
 
-        // 高亮选中的节点
-        this.highlightTreeNode(nodeId);
     }
 
     // 修改highlightTreeNode方法，添加节点高亮效果
@@ -3424,6 +3370,1170 @@ clearSelection() {
         } else {
             console.warn("⚠️ 未找到要选中的节点:", nodeId);
         }
+    }
+
+    // ==================== AI辅助功能方法 ====================
+    
+    // 切换AI辅助面板显示/隐藏
+    toggleAiAssistPanel() {
+        const aiPanel = document.getElementById('aiAssistPanel');
+        if (!aiPanel) return;
+        
+        if (aiPanel.style.display === 'none' || aiPanel.style.display === '') {
+            this.showAiAssistPanel();
+        } else {
+            this.hideAiAssistPanel();
+        }
+    }
+    
+    // 显示AI辅助面板
+    showAiAssistPanel() {
+        const aiPanel = document.getElementById('aiAssistPanel');
+        const aiPromptInput = document.getElementById('aiPromptInput');
+        
+        if (aiPanel) {
+            aiPanel.style.display = 'block';
+            
+            // 更新AI面板中的上下文选择区域
+            this.updateAiPanelContextSelection();
+            
+            // 聚焦到输入框
+            if (aiPromptInput) {
+                setTimeout(() => {
+                    aiPromptInput.focus();
+                }, 100);
+            }
+            
+            // 更新状态消息
+            this.updateStatusMessage('AI辅助面板已打开，输入指令后按Enter或点击生成按钮');
+        }
+    }
+    
+    // 隐藏AI辅助面板
+    hideAiAssistPanel() {
+        const aiPanel = document.getElementById('aiAssistPanel');
+        if (aiPanel) {
+            aiPanel.style.display = 'none';
+            this.updateStatusMessage('AI辅助面板已关闭');
+        }
+    }
+    
+    // 更新AI面板中的上下文选择区域
+    updateAiPanelContextSelection() {
+        const contextSelectionGrid = document.getElementById('contextSelectionGrid');
+        const selectedContextCount = document.getElementById('selectedContextCount');
+        
+        if (!contextSelectionGrid || !selectedContextCount) return;
+        
+        // 更新选中计数
+        selectedContextCount.textContent = this.selectedContexts.size;
+        
+        // 如果没有选中的上下文，显示空状态
+        if (this.selectedContexts.size === 0) {
+            contextSelectionGrid.innerHTML = `
+                <div class="empty-state">
+                    <p>未选择任何上下文</p>
+                </div>
+            `;
+            return;
+        }
+        
+        // 获取选中的上下文数据
+        const selectedContextsData = this.contexts.filter(context => 
+            this.selectedContexts.has(context.id)
+        );
+        
+        // 生成上下文卡片
+        let html = '';
+        selectedContextsData.forEach(context => {
+            const name = context.name || context.title || '未命名';
+            const type = context.type || '未知类型';
+            const icon = this.getContextIcon(type);
+            
+            // 获取内容预览
+            let contentPreview = '无内容';
+            if (context.content) {
+                if (Array.isArray(context.content)) {
+                    contentPreview = context.content.map(item => {
+                        if (typeof item === 'object' && item.content) {
+                            return item.content.substring(0, 50) + (item.content.length > 50 ? '...' : '');
+                        }
+                        return String(item).substring(0, 50) + (String(item).length > 50 ? '...' : '');
+                    }).join('<br>');
+                } else {
+                    contentPreview = String(context.content).substring(0, 100) + 
+                                   (String(context.content).length > 100 ? '...' : '');
+                }
+            }
+            
+            html += `
+                <div class="context-selection-card" data-context-id="${context.id}">
+                    <div class="context-selection-card-header">
+                        <div class="context-selection-card-icon">
+                            <i class="fas ${icon}"></i>
+                        </div>
+                        <div class="context-selection-card-title">${name}</div>
+                    </div>
+                    <div class="context-selection-card-content">${contentPreview}</div>
+                    <button class="context-selection-card-remove" onclick="novelGenerator.removeContextFromAiPanel('${context.id}')">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `;
+        });
+        
+        contextSelectionGrid.innerHTML = html;
+    }
+    
+    // 从AI面板中移除上下文
+    removeContextFromAiPanel(contextId) {
+        event?.stopPropagation(); // 阻止事件冒泡
+        
+        // 从选中集合中移除
+        if (this.selectedContexts.has(contextId)) {
+            this.selectedContexts.delete(contextId);
+            
+            // 更新UI样式
+            this.updateNodeSelectionStyle(contextId);
+            
+            // 更新AI面板中的上下文选择区域
+            this.updateAiPanelContextSelection();
+            
+            // 更新选择计数
+            this.updateSelectionCount();
+            
+            console.log("❌ 从AI面板中移除上下文:", contextId);
+        }
+    }
+    
+    // 重写handleContextClick方法，确保更新AI面板
+    handleContextClick(contextId) {
+        // 处理多选逻辑
+        if (this.isCtrlPressed) {
+            // Ctrl+点击：添加/移除选择
+            this.toggleContextSelection(contextId);
+        } else if (this.isShiftPressed && this.lastSelectedNodeId) {
+            // Shift+点击：范围选择
+            this.selectRange(this.lastSelectedNodeId, contextId);
+        } else {
+            // 普通点击：只选择当前节点，但不清除其他已选中的节点
+            // 如果当前节点已经被选中，则取消选择它
+            if (this.selectedContexts.has(contextId)) {
+                this.toggleContextSelection(contextId);
+            } else {
+                // 如果当前节点没有被选中，则选择它
+                this.toggleContextSelection(contextId);
+            }
+        }
+        
+        // 更新最后选择的节点
+        this.lastSelectedNodeId = contextId;
+        
+        // 显示上下文详情
+        this.showContextDetails(contextId);
+        
+        // 更新树状图，以该节点对应的根节点展开
+        // this.updateTreeWithRootNode(contextId);
+        
+        // 更新UI
+        this.updateSelectionCount();
+        
+        // 如果AI面板是打开的，更新其中的上下文选择区域
+        const aiPanel = document.getElementById('aiAssistPanel');
+        if (aiPanel && aiPanel.style.display === 'block') {
+            this.updateAiPanelContextSelection();
+        }
+        
+        // 如果当前显示的是已选中上下文选项卡，更新列表
+        const selectedTabBtn = document.querySelector('.tab-btn[data-tab="selected"]');
+        if (selectedTabBtn && selectedTabBtn.classList.contains('active')) {
+            this.renderSelectedContexts();
+        }
+    }
+    
+    // 处理AI动作按钮点击
+    handleAiAction(action) {
+        const aiPromptInput = document.getElementById('aiPromptInput');
+        if (!aiPromptInput) return;
+        
+        const actionTexts = {
+            'continue': '请续写以下内容：',
+            'improve': '请润色以下内容：',
+            'summarize': '请总结以下内容：',
+            'expand': '请扩展以下内容：',
+            'dialogue': '请为以下内容添加对话：',
+            'description': '请为以下内容添加描写：'
+        };
+        
+        const actionText = actionTexts[action] || '请处理以下内容：';
+        
+        // 获取编辑器当前选中的文本
+        const editor = document.getElementById('tiptapEditor');
+        let selectedText = '';
+        if (editor) {
+            const selection = window.getSelection();
+            if (selection && selection.toString().trim()) {
+                selectedText = selection.toString();
+            }
+        }
+        
+        // 设置输入框内容
+        if (selectedText) {
+            aiPromptInput.value = `${actionText}\n\n${selectedText}`;
+        } else {
+            aiPromptInput.value = actionText;
+        }
+        
+        // 聚焦到输入框
+        aiPromptInput.focus();
+        aiPromptInput.setSelectionRange(aiPromptInput.value.length, aiPromptInput.value.length);
+    }
+    
+    // 生成AI内容 - ChatGPT风格对话框版本
+    async generateAiContent() {
+        const aiPromptInput = document.getElementById('aiPromptInput');
+        if (!aiPromptInput) {
+            console.error('AI对话框元素未找到');
+            return;
+        }
+        const prompt = aiPromptInput.value.trim();
+        if (!prompt) {
+            this.showModal('输入提示', '<p>请输入指令或问题。</p>');
+            return;
+        }
+        // 清空输入框
+        aiPromptInput.value = '';
+        
+        // 显示加载状态
+        this.showLoading('AI正在生成内容，请稍候...');
+        
+        try {
+            // 获取选中的上下文
+            const selectedContexts = Array.from(this.selectedContexts);
+            // 构建请求数据
+            const requestData = {
+                prompt: prompt,
+                selected_contexts: selectedContexts
+            };
+            console.log('发送AI生成请求:', requestData);
+            
+            // 发送请求到服务端
+            const response = await fetch(`${this.serverUrl}/api/ai/generate`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestData)
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            const result = await response.json();
+            console.log('AI生成响应:', result);
+            
+            // 隐藏加载动画
+            this.hideLoading();
+            
+            // 显示AI生成的内容在模态框中
+            this.showAiResponseModal(result);
+            
+            // 返回结果
+            return result;
+            
+        } catch (error) {
+            console.error('AI生成失败:', error);
+            this.hideLoading();
+            this.showModal('AI生成失败', `<p>错误信息: ${error.message}</p>`);
+        }
+    }
+    
+    // 显示AI响应模态框
+    showAiResponseModal(result) {
+        // 提取AI生成的内容
+        let aiContent = '';
+        if (result.generated_content) {
+            aiContent = result.generated_content;
+        } else if (result.content) {
+            aiContent = result.content;
+        } else if (result.message) {
+            aiContent = result.message;
+        } else {
+            aiContent = JSON.stringify(result, null, 2);
+        }
+        
+        // 格式化内容
+        const formattedContent = this.formatAiResponse(aiContent);
+        
+        // 构建模态框内容，包含应用和取消按钮
+        const modalContent = `
+            <div class="ai-response-modal">
+                <div class="ai-response-content" id="aiResponseContent">
+                    ${formattedContent}
+                </div>
+                <div class="ai-response-actions">
+                    <button class="btn btn-primary" onclick="novelGenerator.applyAiResponseFromModal()">
+                        <i class="fas fa-check"></i> 应用
+                    </button>
+                    <button class="btn btn-secondary" onclick="novelGenerator.hideModal()">
+                        <i class="fas fa-times"></i> 取消
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        // 显示模态框
+        this.showModal('AI生成结果', modalContent);
+        
+        // 存储当前AI响应内容
+        this.currentAiResponse = aiContent;
+    }
+    
+    // 从模态框应用AI响应
+    applyAiResponseFromModal() {
+        if (!this.currentAiResponse) {
+            console.error('没有可应用的AI响应');
+            return;
+        }
+        
+        // 插入文本到编辑器顶部
+        this.insertTextToEditorTop(this.currentAiResponse);
+        
+        // 隐藏模态框
+        this.hideModal();
+        
+        // 清空存储的响应
+        this.currentAiResponse = null;
+        
+        // 显示成功消息
+        this.updateStatusMessage('AI内容已成功应用到编辑器顶部');
+    }
+    
+    // 插入文本到编辑器顶部
+    insertTextToEditorTop(text) {
+        const editor = document.getElementById('tiptapEditor');
+        if (!editor) {
+            console.error('编辑器元素未找到');
+            return;
+        }
+        
+        // 这里需要根据实际的编辑器实现来插入文本到顶部
+        // 由于我们不知道editor.js的具体实现，这里提供一个通用方法
+        if (editor.isContentEditable) {
+            // 对于contenteditable元素，插入到开头
+            const range = document.createRange();
+            const selection = window.getSelection();
+            
+            // 选择编辑器的开头
+            range.setStart(editor, 0);
+            range.collapse(true);
+            
+            // 移除所有现有选择
+            selection.removeAllRanges();
+            selection.addRange(range);
+            
+            // 插入文本
+            if (document.execCommand && document.queryCommandSupported('insertText')) {
+                document.execCommand('insertText', false, text);
+            } else {
+                // 创建文本节点并插入
+                const textNode = document.createTextNode(text);
+                range.insertNode(textNode);
+                
+                // 将光标移动到插入的文本后面
+                range.setStartAfter(textNode);
+                range.collapse(true);
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+        } else {
+            // 如果不是contenteditable，尝试直接在前面添加
+            editor.value = text + (editor.value || '');
+        }
+    }
+    
+
+    
+
+    
+    // 应用AI消息到编辑器
+    applyAiMessage(messageId) {
+        const messageElement = document.getElementById(messageId);
+        if (!messageElement) return;
+        
+        // 获取消息内容（去除HTML标签）
+        const contentElement = messageElement.querySelector('.ai-message-content');
+        if (!contentElement) return;
+        
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = contentElement.innerHTML;
+        const plainText = tempDiv.textContent || tempDiv.innerText || '';
+        
+        // 插入文本到编辑器
+        this.insertTextToEditor(plainText);
+        
+        // 显示成功提示
+        this.showModal('应用成功', '<p>AI生成的内容已成功应用到编辑器。</p>');
+    }
+    
+    // 插入文本到编辑器
+    insertTextToEditor(text) {
+        const editor = document.getElementById('tiptapEditor');
+        if (!editor) {
+            console.error('编辑器元素未找到');
+            return;
+        }
+        
+        // 这里需要根据实际的编辑器实现来插入文本
+        // 由于我们不知道editor.js的具体实现，这里提供一个通用方法
+        if (document.execCommand && document.queryCommandSupported('insertText')) {
+            // 使用execCommand插入文本
+            document.execCommand('insertText', false, text);
+        } else if (editor.isContentEditable) {
+            // 对于contenteditable元素
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                range.deleteContents();
+                range.insertNode(document.createTextNode(text));
+            } else {
+                // 如果没有选中文本，直接追加到末尾
+                editor.textContent += text;
+            }
+        }
+    }
+    
+    // 转义HTML特殊字符
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    // 格式化AI响应
+    formatAiResponse(content) {
+        if (typeof content !== 'string') {
+            content = JSON.stringify(content, null, 2);
+        }
+        
+        // 简单的Markdown格式转换
+        let formatted = content
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/`(.*?)`/g, '<code>$1</code>')
+            .replace(/\n/g, '<br>');
+        
+        return formatted;
+    }
+    
+    // 格式化AI响应
+    formatAiResponse(content) {
+        if (typeof content !== 'string') {
+            content = JSON.stringify(content, null, 2);
+        }
+        
+        // 简单的Markdown格式转换
+        let formatted = content
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/`(.*?)`/g, '<code>$1</code>')
+            .replace(/\n/g, '<br>');
+        
+        return formatted;
+    }
+    
+    // 应用AI响应到编辑器
+    applyAiResponse() {
+        const aiResponseContent = document.getElementById('aiResponseContent');
+        const editor = document.getElementById('tiptapEditor');
+        
+        if (!aiResponseContent || !editor) {
+            console.error('编辑器或AI响应内容未找到');
+            return;
+        }
+        
+        // 获取纯文本内容（去除HTML标签）
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = aiResponseContent.innerHTML;
+        const plainText = tempDiv.textContent || tempDiv.innerText || '';
+        
+        // 这里需要根据实际的编辑器实现来插入文本
+        // 由于我们不知道editor.js的具体实现，这里提供一个通用方法
+        if (document.execCommand && document.queryCommandSupported('insertText')) {
+            // 使用execCommand插入文本
+            document.execCommand('insertText', false, plainText);
+        } else if (editor.isContentEditable) {
+            // 对于contenteditable元素
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                range.deleteContents();
+                range.insertNode(document.createTextNode(plainText));
+            } else {
+                // 如果没有选中文本，直接追加到末尾
+                editor.textContent += plainText;
+            }
+        }
+        
+        // 隐藏AI响应
+        document.getElementById('aiResponse').style.display = 'none';
+        
+        this.updateStatusMessage('AI内容已应用到编辑器');
+    }
+    
+    // 丢弃AI响应
+    discardAiResponse() {
+        document.getElementById('aiResponse').style.display = 'none';
+        this.updateStatusMessage('已丢弃AI响应');
+    }
+    
+    // 更新状态消息
+    updateStatusMessage(message) {
+        const statusMessage = document.getElementById('statusMessage');
+        if (statusMessage) {
+            statusMessage.innerHTML = `<i class="fas fa-info-circle"></i> ${message}`;
+        }
+    }
+    
+    // ==================== 编辑器保存和字数统计方法 ====================
+    
+    // 初始化字数统计
+    initWordCount() {
+        const editor = document.getElementById('tiptapEditor');
+        if (!editor) {
+            console.error('编辑器元素未找到');
+            return;
+        }
+        
+        // 监听编辑器内容变化
+        editor.addEventListener('input', () => {
+            this.updateWordCount();
+        });
+        
+        editor.addEventListener('paste', () => {
+            setTimeout(() => this.updateWordCount(), 100);
+        });
+        
+        // 初始更新字数
+        this.updateWordCount();
+    }
+    
+    // 更新字数统计
+    updateWordCount() {
+        const editor = document.getElementById('tiptapEditor');
+        const wordCountElement = document.getElementById('wordCount');
+        
+        if (!editor || !wordCountElement) {
+            return;
+        }
+        
+        // 获取编辑器内容
+        let content = '';
+        if (editor.isContentEditable) {
+            content = editor.textContent || editor.innerText || '';
+        } else {
+            content = editor.value || '';
+        }
+        
+        // 计算字数（中文字符和英文单词）
+        const chineseChars = content.match(/[\u4e00-\u9fa5]/g) || [];
+        const englishWords = content.match(/\b[a-zA-Z]+\b/g) || [];
+        const totalWords = chineseChars.length + englishWords.length;
+        
+        // 更新显示
+        wordCountElement.textContent = totalWords;
+        
+        // 保存当前内容
+        this.editorContent = content;
+    }
+    
+    // 保存编辑器内容
+    async saveEditorContent() {
+        if (this.isSaving) {
+            console.log('正在保存中，请稍候...');
+            return;
+        }
+        
+        const editor = document.getElementById('tiptapEditor');
+        if (!editor) {
+            console.error('编辑器元素未找到');
+            return;
+        }
+        
+        // 获取编辑器内容
+        let content = '';
+        if (editor.isContentEditable) {
+            content = editor.textContent || editor.innerText || '';
+        } else {
+            content = editor.value || '';
+        }
+        
+        if (!content.trim()) {
+            this.showModal('保存失败', '<p>编辑器内容为空，无法保存。</p>');
+            return;
+        }
+        
+        // 检查内容是否与上次保存的内容相同
+        if (content === this.lastSavedContent) {
+            this.updateStatusMessage('内容未更改，无需保存');
+            return;
+        }
+        
+        this.isSaving = true;
+        this.updateSaveStatus('saving');
+        
+        try {
+            // 获取当前时间
+            const now = new Date();
+            const timestamp = now.toLocaleString('zh-CN');
+            
+            // 构建保存的数据
+            const saveData = {
+                title: `小说文档_${now.getTime()}`,
+                type: '小说数据',
+                content: content,
+                parent_id: 2,
+                description: `保存于 ${timestamp}`
+            };
+            
+            console.log('正在保存编辑器内容...');
+            
+            // 调用后端API保存内容
+            const response = await fetch(`${this.serverUrl}/api/context/create`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(saveData)
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const result = await response.json();
+            console.log('保存成功:', result);
+            
+            // 更新保存状态
+            this.lastSavedContent = content;
+            this.updateSaveStatus('saved');
+            this.updateLastSavedTime(timestamp);
+            
+            // 显示成功消息
+            this.updateStatusMessage(`内容已保存到上下文: ${result.context_id || '未知'}`);
+            
+            // 刷新上下文列表
+            await this.refreshContexts();
+            
+        } catch (error) {
+            console.error('保存失败:', error);
+            this.updateSaveStatus('error');
+            this.showModal('保存失败', `<p>错误信息: ${error.message}</p>`);
+        } finally {
+            this.isSaving = false;
+        }
+    }
+    
+    // 更新保存状态
+    updateSaveStatus(status) {
+        const saveStatusElement = document.getElementById('saveStatus');
+        if (!saveStatusElement) return;
+        
+        // 移除所有状态类
+        saveStatusElement.classList.remove('saving', 'saved', 'error', 'ready');
+        
+        // 添加当前状态类
+        saveStatusElement.classList.add(status);
+        
+        // 更新图标和文本
+        const icon = saveStatusElement.querySelector('i');
+        const text = saveStatusElement.querySelector('span');
+        
+        if (icon && text) {
+            switch (status) {
+                case 'saving':
+                    icon.className = 'fas fa-spinner fa-spin';
+                    text.textContent = '保存中...';
+                    break;
+                case 'saved':
+                    icon.className = 'fas fa-check-circle';
+                    text.textContent = '已保存';
+                    break;
+                case 'error':
+                    icon.className = 'fas fa-exclamation-circle';
+                    text.textContent = '保存失败';
+                    break;
+                case 'ready':
+                    icon.className = 'fas fa-circle';
+                    text.textContent = '就绪';
+                    break;
+            }
+        }
+    }
+    
+    // 更新最后保存时间
+    updateLastSavedTime(timeString) {
+        const lastSavedElement = document.getElementById('lastSaved');
+        if (lastSavedElement) {
+            lastSavedElement.textContent = timeString;
+        }
+    }
+    
+    // 插入文本到编辑器顶部（用于AI响应）
+    insertTextToEditorTop(text) {
+        const editor = document.getElementById('tiptapEditor');
+        if (!editor) {
+            console.error('编辑器元素未找到');
+            return;
+        }
+        
+        // 确保文本以换行符结尾
+        const formattedText = text.trim() + '\n\n';
+        
+        // 这里需要根据实际的编辑器实现来插入文本到顶部
+        // 由于我们不知道editor.js的具体实现，这里提供一个通用方法
+        if (editor.isContentEditable) {
+            // 对于contenteditable元素，插入到开头
+            const range = document.createRange();
+            const selection = window.getSelection();
+            
+            // 选择编辑器的开头
+            range.setStart(editor, 0);
+            range.collapse(true);
+            
+            // 移除所有现有选择
+            selection.removeAllRanges();
+            selection.addRange(range);
+            
+            // 插入文本
+            if (document.execCommand && document.queryCommandSupported('insertText')) {
+                document.execCommand('insertText', false, formattedText);
+            } else {
+                // 创建文本节点并插入
+                const textNode = document.createTextNode(formattedText);
+                range.insertNode(textNode);
+                
+                // 将光标移动到插入的文本后面
+                range.setStartAfter(textNode);
+                range.collapse(true);
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+        } else {
+            // 如果不是contenteditable，尝试直接在前面添加
+            editor.value = formattedText + (editor.value || '');
+        }
+        
+        // 更新字数统计
+        this.updateWordCount();
+    }
+
+    
+    // 显示流式结果模态框 - 改进版
+    showStreamingResultModal(nodeName, nodeType, parentId, relatedContextCount) {
+        console.log("📊 显示流式结果模态框:", { nodeName, nodeType, parentId, relatedContextCount });
+        const modalContent = `
+            <div class="streaming-result-modal">  
+                    <div class="streaming-result-timeline">
+                        <div class="timeline-content" id="streamingMessages">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        this.showModal('<i class="fas fa-stream"></i> 创建节点进度', modalContent);
+        
+        // 初始化流式消息容器
+        this.streamingMessagesContainer = document.getElementById('streamingMessages');
+        if (this.streamingMessagesContainer) {
+            this.streamingMessagesContainer.innerHTML = '';
+        }
+        
+        // 存储当前流式请求的控制器，用于取消
+        this.currentStreamingController = null;
+        
+
+    }
+    
+    // 发送流式创建请求
+    async sendStreamingCreateRequest(nodeData, nodeName, parentId, relatedContextCount) {
+        console.log("📤 发送流式创建请求:", nodeData);
+        
+        try {
+            // 创建AbortController用于取消请求
+            const controller = new AbortController();
+            this.currentStreamingController = controller;
+            
+            // 发送流式请求
+            const response = await fetch(`${this.serverUrl}/api/context/create`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(nodeData),
+                signal: controller.signal
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            // 处理流式响应
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let accumulatedContent = '';
+            
+            // 添加初始消息
+            this.addStreamingMessage('info', '开始处理请求...');
+            
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n').filter(line => line.trim());
+                for (const line of lines) {
+                    if (line.trim()) {
+                        try {
+                            const eventData = JSON.parse(line);
+                            this.handleStreamingEvent(eventData, nodeName, parentId, relatedContextCount);
+                        } catch (error) {
+                            console.error('解析流式数据失败:', error, '原始数据:', line);
+                            this.addStreamingMessage('error', `解析数据失败: ${error.message}`);
+                        }
+                    }
+                }
+            }
+            // 流式处理完成 - 不再在这里显示完成消息，由nodes_created事件处理
+            // 延迟刷新上下文，确保后端已处理完成
+            setTimeout(() => {
+                this.refreshContexts();
+            }, 1500);
+            
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                console.log('流式请求已被取消');
+                this.addStreamingMessage('warning', '请求已被取消');
+            } else {
+                console.error('流式请求失败:', error);
+                this.addStreamingMessage('error', `请求失败: ${error.message}`);
+            }
+        } finally {
+            this.currentStreamingController = null;
+        }
+    }
+    
+    // 处理流式事件
+    handleStreamingEvent(eventData, nodeName, parentId, relatedContextCount) {
+        const { type, content, status, tool, input, output, data, nodes, count } = eventData;
+        switch (type) {
+            case 'ai_message':
+                // AI 生成的文本内容
+                this.addStreamingMessage('ai_message', `${content}`);
+                break;
+            case 'thought':
+                // 大模型思考过程 - 根据status展示不同阶段
+                if (status === 'thinking') {
+                    this.addStreamingMessage('thought', `${content}`);
+                } else if (status === 'tool_start') {
+                    // 工具调用开始
+                    const inputPreview = eventData.input_preview || (input ? JSON.stringify(input).substring(0, 200) : '');
+                    let msg = `${content}`;
+                    if (inputPreview) {
+                        msg += `\n📋 参数: ${inputPreview}`;
+                    }
+                    this.addStreamingMessage('tool', msg);
+                } else if (status === 'tool_end') {
+                    // 工具调用结束
+                    const outputPreview = eventData.output ? 
+                        (typeof eventData.output === 'string' ? eventData.output.substring(0, 300) : JSON.stringify(eventData.output).substring(0, 300)) : '';
+                    let msg = `${content}`;
+                    if (outputPreview) {
+                        msg += `\n📄 结果: ${outputPreview}${eventData.output && (eventData.output.length > 300 || JSON.stringify(eventData.output).length > 300) ? '...' : ''}`;
+                    }
+                    this.addStreamingMessage('tool', msg);
+                } else if (status === 'complete') {
+                    // 任务完成总结
+                    this.addStreamingMessage('success', `${content}`);
+                } else {
+                    // 其他思考过程
+                    this.addStreamingMessage('thought', `${content}`);
+                }
+                break;
+            case 'tool':
+                const toolTitle = status === 'start' ? `🛠️ 思考中: ${content}` : `✅ 执行结果: ${content}`;
+                const toolInput = eventData.tool_input || input;
+                const toolOutput = eventData.tool_output || output;
+                const detail = toolInput ? `输入: ${JSON.stringify(toolInput)}` : (toolOutput ? `输出: ${JSON.stringify(toolOutput)}` : '');
+                this.addStreamingMessage('tool', `${toolTitle}\n${detail}`);
+                break;
+            case 'stats':
+                // Token 统计面板
+                this.addStreamingMessage('stats', `📊 Token统计: ${JSON.stringify(data)}`);
+                break;
+            case 'nodes_created':
+                // 节点创建完成事件
+                const nodeCount = count || (nodes ? nodes.length : 1);
+                const nodeList = nodes || [];
+                let nodeInfo = `✅ 成功创建 ${nodeCount} 个节点：\n`;
+                for (const node of nodeList) {
+                    nodeInfo += `  • ${node.name} (${node.type}, ID: ${node.id})\n`;
+                }
+                this.addStreamingMessage('success', nodeInfo);
+                break;
+            case 'error':
+                this.addStreamingMessage('error', `❌ 错误: ${content}`);
+                break;
+            default:
+                // 未知事件类型，直接显示
+                if (content) {
+                    this.addStreamingMessage('info', `${content}`);
+                }
+                break;
+        }
+    }
+
+
+
+
+    // 添加流式消息 - 改进版
+    addStreamingMessage(type, content) {
+        const container = this.streamingMessagesContainer;
+        if (!container) return;
+    
+        const messageElement = document.createElement('div');
+        messageElement.className = `timeline-item timeline-item-${type}`;
+        
+        let icon = 'fa-info-circle';
+        let title = '系统消息';
+    
+        switch (type) {
+            case 'tool':
+                icon = 'fa-wrench';
+                title = 'Agent 思考步骤';
+                break;
+            case 'ai_message':
+                icon = 'fa-robot';
+                title = 'AI 响应';
+                break;
+            case 'thought':
+                icon = 'fa-brain';
+                title = '思考过程';
+                break;
+            case 'stats':
+                icon = 'fa-chart-bar';
+                title = 'Token 统计';
+                break;
+            case 'success':
+                icon = 'fa-check-circle';
+                title = '节点创建结果';
+                break;
+            case 'error':
+                icon = 'fa-exclamation-circle';
+                title = '错误';
+                break;
+            case 'warning':
+                icon = 'fa-exclamation-triangle';
+                title = '警告';
+                break;
+            case 'info':
+                icon = 'fa-info-circle';
+                title = '系统消息';
+                break;
+        }
+    
+        messageElement.innerHTML = `
+            <div class="timeline-item-icon"><i class="fas ${icon}"></i></div>
+            <div class="timeline-item-content">
+                <div class="timeline-item-header">${title}</div>
+                <div class="timeline-item-body" style="white-space: pre-wrap;">${content}</div>
+            </div>
+        `;
+        container.appendChild(messageElement);
+        container.scrollTop = container.scrollHeight;
+    }
+    
+    // 格式化流式内容 - 提取关键信息
+    formatStreamingContent(content, type) {
+        if (!content) return '';
+        
+        // 如果是JSON字符串，尝试解析并提取关键信息
+        if (typeof content === 'string' && (content.trim().startsWith('{') || content.trim().startsWith('['))) {
+            try {
+                const parsed = JSON.parse(content);
+                return this.extractKeyInfo(parsed, type);
+            } catch (e) {
+                // 如果不是有效的JSON，返回原内容
+                return content;
+            }
+        }
+        
+        // 如果是对象，提取关键信息
+        if (typeof content === 'object' && content !== null) {
+            return this.extractKeyInfo(content, type);
+        }
+        
+        // 普通字符串内容
+        return content;
+    }
+    
+    // 提取关键信息
+    extractKeyInfo(data, type) {
+        if (!data) return '';
+        
+        switch (type) {
+            case 'content':
+                // 内容类型：显示内容预览
+                if (typeof data === 'string') {
+                    return data.length > 150 ? data.substring(0, 150) + '...' : data;
+                }
+                if (data.content) {
+                    const content = typeof data.content === 'string' ? data.content : JSON.stringify(data.content);
+                    return content.length > 150 ? content.substring(0, 150) + '...' : content;
+                }
+                break;
+                
+            case 'tool':
+                // 工具调用：显示工具名称和参数
+                let toolInfo = `<strong>${data.tool || '未知工具'}</strong>`;
+                if (data.parameters) {
+                    toolInfo += `<br><small>参数: ${JSON.stringify(data.parameters).substring(0, 100)}...</small>`;
+                }
+                return toolInfo;
+                
+            case 'progress':
+                // 进度信息：显示阶段和状态
+                if (data.stage) {
+                    return `<strong>${data.stage}</strong>${data.message ? ': ' + data.message : ''}`;
+                }
+                break;
+                
+            case 'all_nodes_saved':
+                // 节点保存成功：显示节点数量
+                const nodeCount = data.ids ? data.ids.length : 0;
+                return `✅ 成功创建了 <strong>${nodeCount}</strong> 个节点`;
+                
+            default:
+                // 其他类型：显示关键字段
+                const keyFields = ['message', 'status', 'result', 'stage', 'tool', 'content'];
+                for (const field of keyFields) {
+                    if (data[field]) {
+                        return typeof data[field] === 'string' ? data[field] : JSON.stringify(data[field]).substring(0, 200);
+                    }
+                }
+        }
+        
+        // 如果没有匹配的格式，返回简化的JSON
+        return JSON.stringify(data, null, 2).substring(0, 300) + (JSON.stringify(data).length > 300 ? '...' : '');
+    }
+    
+
+
+    // 更新消息计数
+    updateMessageCount() {
+        if (!this.streamingMessagesContainer) return;
+        
+        const messageCount = this.streamingMessagesContainer.children.length;
+        const messageCountElement = document.getElementById('messageCount');
+        if (messageCountElement) {
+            messageCountElement.textContent = messageCount;
+        }
+    }
+    
+
+    
+    // 根据消息类型更新进度
+    updateStreamingProgressBasedOnType(type, content) {
+        let percentage = 0;
+        let status = '处理中...';
+        
+        switch (type) {
+            case 'progress':
+                if (content && typeof content === 'object' && content.percentage) {
+                    percentage = content.percentage;
+                    status = content.message || '处理中...';
+                } else {
+                    // 根据消息数量估算进度
+                    if (this.streamingMessagesContainer) {
+                        const totalMessages = this.streamingMessagesContainer.children.length;
+                        percentage = Math.min(90, totalMessages * 10);
+                    }
+                }
+                break;
+                
+            case 'tool':
+                percentage = 30;
+                status = '调用工具中...';
+                break;
+                
+            case 'content':
+                percentage = 60;
+                status = '生成内容中...';
+                break;
+                
+            case 'all_nodes_saved':
+                percentage = 100;
+                status = '完成';
+                break;
+                
+            case 'success':
+                percentage = 100;
+                status = '完成';
+                break;
+                
+            case 'error':
+                percentage = 100;
+                status = '错误';
+                break;
+                
+            default:
+                // 根据消息数量估算进度
+                if (this.streamingMessagesContainer) {
+                    const totalMessages = this.streamingMessagesContainer.children.length;
+                    percentage = Math.min(90, totalMessages * 10);
+                }
+        }
+        
+
+    }
+    
+    // 取消流式请求
+    cancelStreamingRequest() {
+        if (this.currentStreamingController) {
+            this.currentStreamingController.abort();
+            console.log('已取消流式请求');
+        }
+        this.hideModal();
+    }
+    
+    // 调试树状结构
+    debugTreeStructure(treeData, indent = 0) {
+        if (!treeData || !Array.isArray(treeData)) {
+            console.log(' '.repeat(indent) + '树状数据为空或无效');
+            return;
+        }
+        
+        console.log(' '.repeat(indent) + '📊 调试树状结构:');
+        for (const node of treeData) {
+            console.log(' '.repeat(indent) + `├─ ID: ${node.id}, 名称: ${node.name || '未命名'}, 类型: ${node.type || '未知'}, 父节点: ${node.parent_id || '无'}`);
+            
+            if (node.children && Array.isArray(node.children) && node.children.length > 0) {
+                this.debugTreeStructure(node.children, indent + 4);
+            }
+        }
+    }
+    
+    // 更新消息计数
+    updateMessageCount() {
+        const messageCountElement = document.getElementById('messageCount');
+        if (messageCountElement) {
+            messageCountElement.textContent = this.messages.length;
+        }
+    }
+    
+    // 检查服务器是否运行
+    get isServerRunning() {
+        // 这里可以添加更复杂的服务器健康检查逻辑
+        // 目前简单返回true，假设服务器总是运行
+        return true;
     }
 }
 
